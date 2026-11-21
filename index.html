@@ -64,36 +64,6 @@
       padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
     }
 
-    /* カスタムレンジスライダー（ズーム調整用・親指操作しやすいサイズ） */
-    input[type="range"].tactical-slider {
-      -webkit-appearance: none;
-      appearance: none;
-      background: rgba(255, 255, 255, 0.2);
-      height: 6px;
-      border-radius: 999px;
-      outline: none;
-    }
-    input[type="range"].tactical-slider::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      appearance: none;
-      width: 22px;
-      height: 22px;
-      border-radius: 50%;
-      background: #00ff66;
-      border: 2px solid #050a07;
-      box-shadow: 0 0 12px rgba(0, 255, 102, 0.85);
-      cursor: pointer;
-    }
-    input[type="range"].tactical-slider::-moz-range-thumb {
-      width: 22px;
-      height: 22px;
-      border-radius: 50%;
-      background: #00ff66;
-      border: 2px solid #050a07;
-      box-shadow: 0 0 12px rgba(0, 255, 102, 0.85);
-      cursor: pointer;
-    }
-
     /* シャッターフラッシュアニメーション */
     @keyframes shutterFlash {
       0% { opacity: 0.85; }
@@ -259,15 +229,19 @@
         </div>
       </div>
 
-      <!-- 4-2. デジタルズームコントロール（ピンチ操作＋ワンタップ倍率 1.0x / 2.0x / 4.0x） -->
-      <div class="w-full max-w-md flex items-center gap-2.5 px-2">
-        <div class="flex items-center gap-1 shrink-0">
-          <button data-zoom="1" class="zoom-preset-btn min-h-[32px] px-2.5 py-1 rounded-full text-[11px] font-mono font-bold bg-[#00ff66]/20 text-[#00ff66] border border-[#00ff66]/50 active:scale-95 transition">1.0x</button>
-          <button data-zoom="2" class="zoom-preset-btn min-h-[32px] px-2.5 py-1 rounded-full text-[11px] font-mono text-neutral-400 hover:text-white active:scale-95 transition">2.0x</button>
-          <button data-zoom="4" class="zoom-preset-btn min-h-[32px] px-2.5 py-1 rounded-full text-[11px] font-mono text-neutral-400 hover:text-white active:scale-95 transition">4.0x</button>
+      <!-- 4-2. 最新スマホ風 ロータリーズームダイヤル（デバイス性能連動倍率） -->
+      <div class="w-full max-w-md flex flex-col items-center gap-1.5 px-1">
+        <!-- ワンタップ倍率プリセットチップ（デバイス性能に応じて自動生成） -->
+        <div id="zoom-preset-container" class="flex items-center justify-center gap-2">
+          <!-- JSでデバイス対応倍率に応じて動的生成 -->
         </div>
-        <input id="zoom-slider" type="range" min="1" max="4" step="0.05" value="1" class="tactical-slider flex-1" aria-label="ズーム倍率" />
-        <span id="zoom-value-text" class="w-11 text-right text-xs font-mono font-bold text-[#00ff66] shrink-0">1.0x</span>
+
+        <!-- 回転目盛りズームダイヤルドラム -->
+        <div class="relative w-full h-11 rounded-2xl bg-black/75 border border-white/15 backdrop-blur-md overflow-hidden shadow-inner">
+          <canvas id="zoom-dial-canvas" class="block w-full h-full cursor-grab active:cursor-grabbing touch-none" aria-label="ズームダイヤル"></canvas>
+          <!-- 右端デバイス上限バッジ -->
+          <span id="zoom-max-badge" class="pointer-events-none absolute top-1 right-2 text-[9px] font-mono text-neutral-500">MAX 4.0x</span>
+        </div>
       </div>
 
       <!-- 4-3. 撮影モード切替タブ（写真 / 動画） -->
@@ -425,7 +399,7 @@
       </div>
     </div>
 
-    <!-- ==================== 6. ギャラリー＆プレビューモーダル（Web Share API共有対応） ==================== -->
+    <!-- ==================== 6. ギャラリー＆プレビューモーダル（Web Share API共有・一括DL対応） ==================== -->
     <div id="gallery-modal" class="hidden fixed inset-0 z-50 bg-neutral-950 flex flex-col h-[100dvh]">
       <!-- ギャラリーヘッダー -->
       <div class="safe-header flex items-center justify-between pb-3 border-b border-neutral-800 bg-neutral-900/90 backdrop-blur-md">
@@ -434,6 +408,13 @@
           <span id="gallery-modal-count" class="px-2 py-0.5 rounded-full bg-neutral-800 text-xs font-mono text-[#00ff66]">0件</span>
         </div>
         <div class="flex items-center gap-2">
+          <!-- 一括ダウンロードボタン -->
+          <button id="btn-download-all-media" class="hidden min-h-[38px] flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#00ff66]/15 hover:bg-[#00ff66]/25 border border-[#00ff66]/60 text-xs font-bold text-[#00ff66] active:scale-95 transition">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            <span>一括保存</span>
+          </button>
           <button id="btn-clear-all-media" class="hidden min-h-[38px] px-3 py-1.5 rounded-xl bg-red-950/60 hover:bg-red-900/70 border border-red-800/50 text-xs font-semibold text-red-300 transition">
             すべて削除
           </button>
@@ -516,7 +497,7 @@
           </li>
           <li class="flex gap-2">
             <span class="text-[#00ff66] font-bold">●</span>
-            <span><strong>スマホ直感操作：</strong>画面の<strong>2本指ピンチイン／ピンチアウト</strong>でスムーズなデジタルズーム（1.0x〜4.0x）、<strong>1本指タップ</strong>で任意地点へのターゲットロックオンが可能です。</span>
+            <span><strong>スマホ直感操作：</strong>下部の<strong>ロータリーズームダイヤル</strong>を左右に回すか、画面の<strong>2本指ピンチ操作</strong>で端末性能に応じたスムーズなズーム、<strong>1本指タップ</strong>で任意地点へのターゲットロックオンが可能です。</span>
           </li>
           <li class="flex gap-2">
             <span class="text-[#00ff66] font-bold">●</span>
@@ -548,7 +529,26 @@
         facingMode: 'environment', // 'environment' (バック) | 'user' (フロント)
         isDemoMode: false,
         captureMode: 'photo',      // 'photo' | 'video'
-        zoom: 1.0,                 // 1.0 ~ 4.0
+
+        // デバイス性能に応じたズーム管理
+        zoom: 1.0,
+        minZoom: 1.0,
+        maxZoom: 4.0,
+        hwZoomSupported: false,
+        hwMinZoom: 1.0,
+        hwMaxZoom: 1.0,
+        lastAppliedHwZoom: 1.0,
+        effectiveDigitalZoom: 1.0,
+        zoomPresets: [1.0, 2.0, 4.0],
+
+        // ズームダイヤル物理演算・アニメーション状態
+        dialVelocity: 0,
+        dialIsDragging: false,
+        dialLastX: 0,
+        dialLastTime: 0,
+        dialDragMoved: false,
+        dialTargetZoom: null,
+        lastHapticTick: -1,
 
         // HUD設定
         hudEnabled: true,
@@ -582,7 +582,7 @@
         pinchStartZoom: 1.0,
         isPinching: false,
 
-        // ギャラリー保存データ（Blobオブジェクトも保持してWeb Share APIに対応）
+        // ギャラリー保存データ（Blobオブジェクトも保持してWeb Share API・一括ZIPに対応）
         mediaItems: [],            // { id, type: 'photo'|'video', blob, mimeType, url, thumbUrl, filename, timestamp, burnHud, resolution }
         selectedMediaIndex: -1
       };
@@ -615,10 +615,10 @@
         hudToggleLabel: document.getElementById('hud-toggle-label'),
         hudStyleBtns: document.querySelectorAll('.hud-style-btn'),
 
-        // ズーム
-        zoomSlider: document.getElementById('zoom-slider'),
-        zoomValueText: document.getElementById('zoom-value-text'),
-        zoomPresetBtns: document.querySelectorAll('.zoom-preset-btn'),
+        // ズームダイヤル
+        zoomPresetContainer: document.getElementById('zoom-preset-container'),
+        zoomDialCanvas: document.getElementById('zoom-dial-canvas'),
+        zoomMaxBadge: document.getElementById('zoom-max-badge'),
 
         // モード・シャッター・焼き込み
         modePhotoBtn: document.getElementById('mode-photo-btn'),
@@ -650,6 +650,7 @@
         // ギャラリーモーダル
         galleryModal: document.getElementById('gallery-modal'),
         btnCloseGallery: document.getElementById('btn-close-gallery'),
+        btnDownloadAllMedia: document.getElementById('btn-download-all-media'),
         btnClearAllMedia: document.getElementById('btn-clear-all-media'),
         galleryModalCount: document.getElementById('gallery-modal-count'),
         galleryEmptyState: document.getElementById('gallery-empty-state'),
@@ -670,6 +671,7 @@
       };
 
       const displayCtx = dom.displayCanvas.getContext('2d', { alpha: false });
+      const dialCtx = dom.zoomDialCanvas.getContext('2d');
       const captureCanvas = document.createElement('canvas');
       const captureCtx = captureCanvas.getContext('2d', { alpha: false });
 
@@ -696,7 +698,386 @@
       }
 
       // ==========================================
-      // 4. カメラ初期化＆ストリーム管理（完全無音）
+      // 4. デバイス性能に応じたズーム範囲・プリセット設定
+      // ==========================================
+      function configureDeviceZoomRange(stream) {
+        let minZ = 1.0;
+        let maxZ = 4.0;
+        let hwSupported = false;
+        let hwMin = 1.0;
+        let hwMax = 1.0;
+
+        if (stream) {
+          const videoTrack = stream.getVideoTracks()[0];
+          if (videoTrack && typeof videoTrack.getCapabilities === 'function') {
+            try {
+              const caps = videoTrack.getCapabilities();
+              if (caps && caps.zoom && typeof caps.zoom.max === 'number' && caps.zoom.max > 1.0) {
+                hwSupported = true;
+                hwMin = Math.max(0.5, Number(caps.zoom.min) || 1.0);
+                hwMax = Math.min(30.0, Number(caps.zoom.max));
+                minZ = hwMin;
+                maxZ = hwMax;
+              }
+            } catch (e) {
+              console.warn('getCapabilities取得スキップ:', e);
+            }
+          }
+        }
+
+        // カメラAPIからzoom上限が返らない端末（iOS Safari・デモモード等）の性能別フォールバック
+        if (!hwSupported) {
+          const isTouchMobile = (navigator.maxTouchPoints > 0) || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+          if (state.isDemoMode) {
+            minZ = 1.0;
+            maxZ = 6.0;
+          } else if (state.facingMode === 'user') {
+            minZ = 1.0;
+            maxZ = 3.0;
+          } else if (isTouchMobile) {
+            // 最新スマホ相当のズームレンジ（1.0x 〜 8.0x）
+            minZ = 1.0;
+            maxZ = 8.0;
+          } else {
+            minZ = 1.0;
+            maxZ = 5.0;
+          }
+        }
+
+        state.minZoom = Number(minZ.toFixed(1));
+        state.maxZoom = Number(maxZ.toFixed(1));
+        state.hwZoomSupported = hwSupported;
+        state.hwMinZoom = hwMin;
+        state.hwMaxZoom = hwMax;
+        state.lastAppliedHwZoom = 1.0;
+
+        // デバイス性能に応じたワンタップ倍率プリセット生成
+        const presets = [];
+        if (state.minZoom < 0.9) {
+          presets.push(Number(state.minZoom.toFixed(1)));
+        }
+        presets.push(1.0);
+
+        if (state.maxZoom >= 2.0) presets.push(2.0);
+        if (state.maxZoom >= 5.0) {
+          presets.push(5.0);
+          if (state.maxZoom >= 8.0) {
+            presets.push(Math.round(state.maxZoom));
+          }
+        } else if (state.maxZoom > 2.2) {
+          presets.push(Number(state.maxZoom.toFixed(1)));
+        }
+
+        state.zoomPresets = [...new Set(presets)];
+        dom.zoomMaxBadge.textContent = `${hwSupported ? 'OPT/DIG' : 'DIG'} MAX ${state.maxZoom.toFixed(1)}x`;
+
+        buildZoomPresetButtons();
+        const initialZoom = state.minZoom <= 1.0 && state.maxZoom >= 1.0 ? 1.0 : state.minZoom;
+        setZoom(initialZoom, true);
+      }
+
+      function buildZoomPresetButtons() {
+        dom.zoomPresetContainer.innerHTML = '';
+        state.zoomPresets.forEach((presetVal) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.dataset.zoom = String(presetVal);
+          btn.className = 'zoom-preset-btn min-w-[36px] h-[28px] px-2 rounded-full text-[11px] font-mono font-bold transition-all active:scale-90 flex items-center justify-center';
+          btn.textContent = `${Number.isInteger(presetVal) ? presetVal : presetVal.toFixed(1)}x`;
+          btn.addEventListener('click', () => {
+            state.dialVelocity = 0;
+            state.dialTargetZoom = presetVal;
+          });
+          dom.zoomPresetContainer.appendChild(btn);
+        });
+      }
+
+      function updateZoomPresetHighlights() {
+        const buttons = dom.zoomPresetContainer.querySelectorAll('.zoom-preset-btn');
+        if (!buttons.length) return;
+
+        // 現在のズーム倍率に最も近いプリセットを特定（区間ベース）
+        let activeIdx = 0;
+        for (let i = 0; i < state.zoomPresets.length; i++) {
+          if (state.zoom >= state.zoomPresets[i] - 0.05) {
+            activeIdx = i;
+          }
+        }
+
+        buttons.forEach((btn, idx) => {
+          const baseVal = Number(btn.dataset.zoom);
+          const baseLabel = `${Number.isInteger(baseVal) ? baseVal : baseVal.toFixed(1)}x`;
+          if (idx === activeIdx) {
+            btn.className = 'zoom-preset-btn min-w-[44px] h-[28px] px-2.5 rounded-full text-[11px] font-mono font-bold bg-[#00ff66] text-black shadow-[0_0_12px_rgba(0,255,102,0.55)] scale-105 transition-all flex items-center justify-center';
+            btn.textContent = `${state.zoom.toFixed(1)}x`;
+          } else {
+            btn.className = 'zoom-preset-btn min-w-[36px] h-[28px] px-2 rounded-full text-[11px] font-mono font-semibold bg-black/75 text-neutral-300 border border-white/15 hover:text-white transition-all flex items-center justify-center';
+            btn.textContent = baseLabel;
+          }
+        });
+      }
+
+      // ==========================================
+      // 5. ロータリーズームダイヤル 描画＆対数スケール物理演算
+      // ==========================================
+      function zoomToDialProgress(z) {
+        const clamped = Math.min(state.maxZoom, Math.max(state.minZoom, z));
+        if (state.maxZoom <= state.minZoom) return 0;
+        return Math.log(clamped / state.minZoom) / Math.log(state.maxZoom / state.minZoom);
+      }
+
+      function dialProgressToZoom(t) {
+        const clampedT = Math.min(1, Math.max(0, t));
+        return state.minZoom * Math.pow(state.maxZoom / state.minZoom, clampedT);
+      }
+
+      function resizeDialCanvas() {
+        if (!dom.zoomDialCanvas || !dom.zoomDialCanvas.parentElement) return;
+        const rect = dom.zoomDialCanvas.parentElement.getBoundingClientRect();
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        dom.zoomDialCanvas.width = Math.max(1, Math.floor(rect.width * dpr));
+        dom.zoomDialCanvas.height = Math.max(1, Math.floor(rect.height * dpr));
+      }
+
+      function updateDialPhysicsAndRender() {
+        // プリセットタップ時のスムーズ補間アニメーション
+        if (state.dialTargetZoom !== null && !state.dialIsDragging) {
+          const diff = state.dialTargetZoom - state.zoom;
+          if (Math.abs(diff) < 0.015) {
+            setZoom(state.dialTargetZoom, true);
+            state.dialTargetZoom = null;
+          } else {
+            setZoom(state.zoom + diff * 0.24, true);
+          }
+        }
+        // フリック後の慣性回転アニメーション
+        else if (!state.dialIsDragging && Math.abs(state.dialVelocity) > 0.00015) {
+          const currentT = zoomToDialProgress(state.zoom);
+          const nextT = currentT + state.dialVelocity;
+          if (nextT <= 0 || nextT >= 1) {
+            state.dialVelocity = 0;
+            setZoom(nextT <= 0 ? state.minZoom : state.maxZoom);
+          } else {
+            setZoom(dialProgressToZoom(nextT));
+            state.dialVelocity *= 0.90;
+          }
+        }
+
+        renderZoomDial();
+      }
+
+      function renderZoomDial() {
+        const w = dom.zoomDialCanvas.width;
+        const h = dom.zoomDialCanvas.height;
+        if (w <= 0 || h <= 0) return;
+
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const cx = w * 0.5;
+        const currentT = zoomToDialProgress(state.zoom);
+
+        // ダイヤル全長のピクセル幅（1.0x〜2.0x 等が指で回しやすい間隔になるよう自動算出）
+        const octaves = Math.log2(Math.max(1.1, state.maxZoom / state.minZoom));
+        const pxPerOctave = 145 * dpr;
+        const totalDialSpanPx = Math.max(w * 0.75, octaves * pxPerOctave);
+
+        dialCtx.clearRect(0, 0, w, h);
+
+        // ダイヤルの全目盛りを生成（0.1x / 0.5x / 1.0x 刻み）
+        const ticks = [];
+        const addTick = (val, isMajor, labelText) => {
+          if (val >= state.minZoom - 0.001 && val <= state.maxZoom + 0.001) {
+            ticks.push({ val, isMajor, labelText });
+          }
+        };
+
+        if (state.minZoom < 1.0) {
+          for (let v = state.minZoom; v < 0.99; v += 0.1) {
+            const rv = Math.round(v * 10) / 10;
+            const isM = Math.abs(rv - state.minZoom) < 0.01;
+            addTick(rv, isM, isM ? `${rv.toFixed(1)}x` : '');
+          }
+        }
+
+        // 1.0x 〜 3.0x までは 0.1x 刻み
+        const fineMax = Math.min(state.maxZoom, 3.0);
+        for (let v = 1.0; v <= fineMax + 0.001; v += 0.1) {
+          const rv = Math.round(v * 10) / 10;
+          const isM = Math.abs(rv - Math.round(rv)) < 0.01;
+          addTick(rv, isM, isM ? `${Math.round(rv)}x` : '');
+        }
+
+        // 3.0x 〜 10.0x までは 0.5x 刻み
+        if (state.maxZoom > 3.0) {
+          const midMax = Math.min(state.maxZoom, 10.0);
+          for (let v = 3.5; v <= midMax + 0.001; v += 0.5) {
+            const rv = Math.round(v * 10) / 10;
+            const isM = Math.abs(rv - Math.round(rv)) < 0.01;
+            addTick(rv, isM, isM ? `${Math.round(rv)}x` : '');
+          }
+        }
+
+        // 10.0x 超は 1.0x 刻み
+        if (state.maxZoom > 10.0) {
+          for (let v = 11.0; v <= state.maxZoom + 0.001; v += 1.0) {
+            const rv = Math.round(v);
+            const isM = rv % 5 === 0 || Math.abs(rv - state.maxZoom) < 0.1;
+            addTick(rv, isM, isM ? `${rv}x` : '');
+          }
+        }
+
+        dialCtx.save();
+        dialCtx.font = `700 ${Math.round(9.5 * dpr)}px "JetBrains Mono", monospace`;
+        dialCtx.textAlign = 'center';
+
+        ticks.forEach((tick) => {
+          const tickT = zoomToDialProgress(tick.val);
+          const dx = (tickT - currentT) * totalDialSpanPx;
+          const x = cx + dx;
+
+          if (x < -20 * dpr || x > w + 20 * dpr) return;
+
+          // 円筒ドラムの湾曲＆端フェード演出
+          const normDist = Math.min(1, Math.abs(dx) / (w * 0.48));
+          const alpha = Math.max(0.08, Math.cos(normDist * Math.PI * 0.48));
+          const curveDrop = Math.pow(normDist, 2) * 5 * dpr;
+
+          const isNearCenter = Math.abs(dx) < 6 * dpr;
+          const tickH = (tick.isMajor ? 13 : 7) * dpr;
+          const baseY = h - 7 * dpr - curveDrop;
+
+          dialCtx.strokeStyle = isNearCenter
+            ? `rgba(0, 255, 102, ${Math.min(1, alpha + 0.3)})`
+            : tick.isMajor
+              ? `rgba(255, 255, 255, ${alpha * 0.85})`
+              : `rgba(255, 255, 255, ${alpha * 0.38})`;
+          dialCtx.lineWidth = (tick.isMajor ? 1.8 : 1.1) * dpr;
+
+          dialCtx.beginPath();
+          dialCtx.moveTo(x, baseY);
+          dialCtx.lineTo(x, baseY - tickH);
+          dialCtx.stroke();
+
+          if (tick.labelText) {
+            dialCtx.fillStyle = isNearCenter
+              ? `rgba(0, 255, 102, ${alpha})`
+              : `rgba(210, 225, 215, ${alpha * 0.85})`;
+            dialCtx.fillText(tick.labelText, x, baseY - tickH - 4 * dpr);
+          }
+        });
+
+        // 中央の固定インジケーター針（#00ff66）
+        dialCtx.shadowColor = 'rgba(0, 255, 102, 0.85)';
+        dialCtx.shadowBlur = 6 * dpr;
+        dialCtx.strokeStyle = '#00ff66';
+        dialCtx.fillStyle = '#00ff66';
+        dialCtx.lineWidth = 2.2 * dpr;
+
+        dialCtx.beginPath();
+        dialCtx.moveTo(cx, h - 4 * dpr);
+        dialCtx.lineTo(cx, h - 24 * dpr);
+        dialCtx.stroke();
+
+        // 上部の小さな三角ポインター
+        dialCtx.beginPath();
+        dialCtx.moveTo(cx, 6 * dpr);
+        dialCtx.lineTo(cx - 4 * dpr, 1 * dpr);
+        dialCtx.lineTo(cx + 4 * dpr, 1 * dpr);
+        dialCtx.closePath();
+        dialCtx.fill();
+
+        dialCtx.restore();
+      }
+
+      // ダイヤルのポインター操作イベント（タッチ＆マウス両対応）
+      function getDialPxPerProgress() {
+        const w = dom.zoomDialCanvas.getBoundingClientRect().width || 320;
+        const octaves = Math.log2(Math.max(1.1, state.maxZoom / state.minZoom));
+        return Math.max(w * 0.75, octaves * 145);
+      }
+
+      function onDialPointerDown(clientX) {
+        state.dialIsDragging = true;
+        state.dialTargetZoom = null;
+        state.dialVelocity = 0;
+        state.dialLastX = clientX;
+        state.dialLastTime = performance.now();
+        state.dialDragMoved = false;
+      }
+
+      function onDialPointerMove(clientX) {
+        if (!state.dialIsDragging) return;
+        const now = performance.now();
+        const dx = clientX - state.dialLastX;
+        const dt = Math.max(1, now - state.dialLastTime);
+
+        if (Math.abs(dx) > 2) state.dialDragMoved = true;
+
+        // 指を左へ動かすと倍率UP、右へ動かすと倍率DOWN（最新スマホ標準のホイール操作感）
+        const deltaT = -dx / getDialPxPerProgress();
+        const nextT = zoomToDialProgress(state.zoom) + deltaT;
+        setZoom(dialProgressToZoom(nextT));
+
+        state.dialVelocity = deltaT * (16 / dt) * 0.85;
+        state.dialLastX = clientX;
+        state.dialLastTime = now;
+      }
+
+      function onDialPointerUp(clientX) {
+        if (!state.dialIsDragging) return;
+        state.dialIsDragging = false;
+
+        // ほとんど動かさずにタップした場合は、タップした目盛り位置へスムーズ移動
+        if (!state.dialDragMoved && typeof clientX === 'number') {
+          const rect = dom.zoomDialCanvas.getBoundingClientRect();
+          const offsetFromCenter = clientX - (rect.left + rect.width * 0.5);
+          const deltaT = offsetFromCenter / getDialPxPerProgress();
+          const targetT = zoomToDialProgress(state.zoom) + deltaT;
+          state.dialVelocity = 0;
+          state.dialTargetZoom = dialProgressToZoom(targetT);
+        }
+      }
+
+      dom.zoomDialCanvas.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 1) {
+          e.preventDefault();
+          onDialPointerDown(e.touches[0].clientX);
+        }
+      }, { passive: false });
+
+      dom.zoomDialCanvas.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 1 && state.dialIsDragging) {
+          e.preventDefault();
+          onDialPointerMove(e.touches[0].clientX);
+        }
+      }, { passive: false });
+
+      dom.zoomDialCanvas.addEventListener('touchend', (e) => {
+        const clientX = e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientX : undefined;
+        onDialPointerUp(clientX);
+      });
+
+      dom.zoomDialCanvas.addEventListener('mousedown', (e) => {
+        onDialPointerDown(e.clientX);
+      });
+      window.addEventListener('mousemove', (e) => {
+        if (state.dialIsDragging) onDialPointerMove(e.clientX);
+      });
+      window.addEventListener('mouseup', (e) => {
+        if (state.dialIsDragging) onDialPointerUp(e.clientX);
+      });
+
+      // PCマウスホイールでもダイヤル回転可能
+      dom.zoomDialCanvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        state.dialTargetZoom = null;
+        state.dialVelocity = 0;
+        const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+        const nextT = zoomToDialProgress(state.zoom) + (delta * 0.0008);
+        setZoom(dialProgressToZoom(nextT));
+      }, { passive: false });
+
+      // ==========================================
+      // 6. カメラ初期化＆ストリーム管理（完全無音）
       // ==========================================
       async function initCamera() {
         stopCurrentStream();
@@ -705,6 +1086,7 @@
         dom.fallbackOverlay.classList.add('hidden');
 
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          configureDeviceZoomRange(null);
           showFallback('お使いのブラウザはカメラAPI（getUserMedia）に対応していないか、HTTPS環境ではありません。');
           return;
         }
@@ -725,10 +1107,14 @@
           dom.video.srcObject = stream;
           await dom.video.play();
 
+          // デバイスのズーム性能を自動検出してダイヤルへ反映
+          configureDeviceZoomRange(stream);
+
           const modeName = state.facingMode === 'user' ? 'フロントカメラ' : 'バックカメラ';
-          showToast(`SILENT READY // ${modeName}起動`);
+          showToast(`SILENT READY // ${modeName}起動 (MAX ${state.maxZoom.toFixed(1)}x)`);
         } catch (err) {
           console.warn('カメラ取得エラー:', err);
+          configureDeviceZoomRange(null);
           let reason = 'カメラの起動に失敗しました。ブラウザの権限設定をご確認ください。';
           if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
             reason = 'カメラへのアクセスが拒否されました。ブラウザの設定からカメラを許可して「再試行」を押すか、デモモードをお試しください。';
@@ -754,19 +1140,21 @@
       function startDemoMode() {
         stopCurrentStream();
         state.isDemoMode = true;
+        configureDeviceZoomRange(null);
         dom.fallbackOverlay.classList.add('hidden');
         dom.demoBadge.classList.remove('hidden');
         showToast('DEMO MODE // 模擬戦術映像を起動');
       }
 
       // ==========================================
-      // 5. キャンバスサイズ追従＆レスポンシブ調整
+      // 7. キャンバスサイズ追従＆レスポンシブ調整
       // ==========================================
       function resizeDisplayCanvas() {
         const rect = dom.displayCanvas.parentElement.getBoundingClientRect();
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         dom.displayCanvas.width = Math.max(1, Math.floor(rect.width * dpr));
         dom.displayCanvas.height = Math.max(1, Math.floor(rect.height * dpr));
+        resizeDialCanvas();
       }
       window.addEventListener('resize', resizeDisplayCanvas);
       window.addEventListener('orientationchange', () => {
@@ -774,7 +1162,7 @@
       });
 
       // ==========================================
-      // 6. 映像描画エンジン（実カメラ / デモ模擬映像 / ズーム / フィルター）
+      // 8. 映像描画エンジン（実カメラ / デモ模擬映像 / ズーム / フィルター）
       // ==========================================
       function renderDemoSource(ctx, width, height, nowSec) {
         const grad = ctx.createLinearGradient(0, 0, 0, height);
@@ -845,10 +1233,12 @@
           ctx.scale(-1, 1);
         }
 
+        const digitalScale = Math.max(0.5, state.effectiveDigitalZoom);
+
         if (state.isDemoMode || !dom.video.videoWidth || !dom.video.videoHeight) {
           ctx.save();
           ctx.translate(targetW / 2, targetH / 2);
-          ctx.scale(state.zoom, state.zoom);
+          ctx.scale(digitalScale, digitalScale);
           ctx.translate(-targetW / 2, -targetH / 2);
           renderDemoSource(ctx, targetW, targetH, nowSec);
           ctx.restore();
@@ -867,8 +1257,8 @@
             cropH = vw / targetRatio;
           }
 
-          const zoomedW = cropW / state.zoom;
-          const zoomedH = cropH / state.zoom;
+          const zoomedW = cropW / digitalScale;
+          const zoomedH = cropH / digitalScale;
           const sx = (vw - zoomedW) / 2;
           const sy = (vh - zoomedH) / 2;
 
@@ -908,8 +1298,7 @@
       }
 
       // ==========================================
-      // 7. 軍用照準（ミリタリーHUD）静的精密描画エンジン
-      //    ※中央の回転アニメーション要素は完全に排除し、クリアな視界を確保
+      // 9. 軍用照準（ミリタリーHUD）静的精密描画エンジン
       // ==========================================
       function drawMilitaryHUD(ctx, w, h, nowSec) {
         const hudGreen = '#00ff66';
@@ -927,14 +1316,11 @@
         ctx.shadowBlur = 4 * scale;
         ctx.lineCap = 'square';
 
-        // 傾き・方位データ（センサー未使用時は水平固定で余計な揺れを防止）
         const activeRoll = state.hasGyro ? state.roll : 0;
         const activePitch = state.hasGyro ? state.pitch : 0;
         const activeHeading = state.hasGyro ? state.heading : 342;
 
-        // ------------------------------------------
         // 0. タクティカルグリッド線（設定ON時）
-        // ------------------------------------------
         if (state.showGrid) {
           ctx.save();
           ctx.shadowBlur = 0;
@@ -953,9 +1339,7 @@
           ctx.restore();
         }
 
-        // ------------------------------------------
         // A. スナイパースコープ専用：精密測距グリッド＆スコープ外周
-        // ------------------------------------------
         if (state.hudStyle === 'sniper') {
           const scopeRadius = minDim * 0.41;
           ctx.save();
@@ -966,14 +1350,12 @@
           ctx.arc(cx, cy, scopeRadius, 0, Math.PI * 2, true);
           ctx.fill();
 
-          // 静的なスコープ外周リング
           ctx.strokeStyle = hudGreen;
           ctx.lineWidth = 2.2 * scale;
           ctx.beginPath();
           ctx.arc(cx, cy, scopeRadius, 0, Math.PI * 2);
           ctx.stroke();
 
-          // 角度目盛り（360度静的配置）
           ctx.lineWidth = 1.2 * scale;
           for (let deg = 0; deg < 360; deg += 15) {
             const rad = (deg * Math.PI) / 180;
@@ -986,45 +1368,37 @@
           ctx.restore();
         }
 
-        // ------------------------------------------
         // B. 四隅のターゲットブラケット（全スタイル共通）
-        // ------------------------------------------
         const marginX = Math.max(18 * scale, w * 0.05);
         const marginY = Math.max(66 * scale, h * 0.09);
         const bracketLen = 28 * scale;
         ctx.lineWidth = 2.2 * scale;
 
-        // 左上
         ctx.beginPath();
         ctx.moveTo(marginX, marginY + bracketLen);
         ctx.lineTo(marginX, marginY);
         ctx.lineTo(marginX + bracketLen, marginY);
         ctx.stroke();
 
-        // 右上
         ctx.beginPath();
         ctx.moveTo(w - marginX - bracketLen, marginY);
         ctx.lineTo(w - marginX, marginY);
         ctx.lineTo(w - marginX, marginY + bracketLen);
         ctx.stroke();
 
-        // 左下
         ctx.beginPath();
         ctx.moveTo(marginX, h - marginY - bracketLen);
         ctx.lineTo(marginX, h - marginY);
         ctx.lineTo(marginX + bracketLen, h - marginY);
         ctx.stroke();
 
-        // 右下
         ctx.beginPath();
         ctx.moveTo(w - marginX - bracketLen, h - marginY);
         ctx.lineTo(w - marginX, h - marginY);
         ctx.lineTo(w - marginX, h - marginY - bracketLen);
         ctx.stroke();
 
-        // ------------------------------------------
         // C. 上部方位コンパススケール（テレメトリ表示ON時）
-        // ------------------------------------------
         if (state.showTelemetry) {
           const tapeW = Math.min(w * 0.54, 300 * scale);
           const tapeY = marginY + 14 * scale;
@@ -1065,7 +1439,6 @@
           }
           ctx.restore();
 
-          // 中央方位ポインター三角
           ctx.beginPath();
           ctx.moveTo(cx, tapeY + 10 * scale);
           ctx.lineTo(cx - 5 * scale, tapeY + 17 * scale);
@@ -1074,9 +1447,7 @@
           ctx.fill();
         }
 
-        // ------------------------------------------
         // D. 水平インジケーター（傾きセンサー連動・静的水平ウィング）
-        // ------------------------------------------
         ctx.save();
         ctx.translate(cx, cy);
         ctx.rotate((-activeRoll * Math.PI) / 180);
@@ -1086,7 +1457,6 @@
         ctx.strokeStyle = hudDim;
         ctx.lineWidth = 1.4 * scale;
 
-        // 水平基準ウィング（左右）
         ctx.beginPath();
         ctx.moveTo(-ladderHalfW, 0);
         ctx.lineTo(-ladderGap, 0);
@@ -1096,7 +1466,6 @@
         ctx.lineTo(ladderGap, 7 * scale);
         ctx.stroke();
 
-        // ピッチラダー上下目盛り（±10度）
         const pitchOffset = activePitch * 2.5 * scale;
         [-10, 10].forEach(deg => {
           const py = pitchOffset - deg * 2.5 * scale;
@@ -1110,19 +1479,15 @@
         });
         ctx.restore();
 
-        // ------------------------------------------
         // E. 中央の静的ミリタリーレティクル（精密十字線＋ミルドット測距目盛り）
-        //    ※回転パーツなし・被写体の視認性を妨げないクリア設計
-        // ------------------------------------------
         ctx.save();
         ctx.translate(cx, cy);
 
         const crossArm = (state.hudStyle === 'sniper' ? minDim * 0.34 : 88 * scale);
-        const centerClear = 12 * scale; // 中央付近はクリアに空けて被写体を見やすくする
+        const centerClear = 12 * scale;
         ctx.strokeStyle = hudGreen;
         ctx.lineWidth = 1.6 * scale;
 
-        // 縦軸・横軸ライン
         ctx.beginPath();
         ctx.moveTo(-crossArm, 0);
         ctx.lineTo(-centerClear, 0);
@@ -1134,19 +1499,17 @@
         ctx.lineTo(0, crossArm);
         ctx.stroke();
 
-        // ミルスペック・測距目盛り
         const step = 16 * scale;
         const maxTicks = state.hudStyle === 'sniper' ? 6 : 4;
         for (let i = 1; i <= maxTicks; i++) {
           const pos = centerClear + i * step;
           if (pos < crossArm) {
             ctx.beginPath();
-            // 横目盛り
             ctx.moveTo(pos, -3.5 * scale);
             ctx.lineTo(pos, 3.5 * scale);
             ctx.moveTo(-pos, -3.5 * scale);
             ctx.lineTo(-pos, 3.5 * scale);
-            // 縦（弾道ドロップ）目盛り
+
             const dropW = (state.hudStyle === 'sniper' ? Math.max(3, (7 - i) * 3.2) : (5 - i) * 3.2) * scale;
             ctx.moveTo(-dropW, pos);
             ctx.lineTo(dropW, pos);
@@ -1156,16 +1519,13 @@
           }
         }
 
-        // 中央の極小精密ドット（静止）
         ctx.fillStyle = hudGreen;
         ctx.beginPath();
         ctx.arc(0, 0, 2.0 * scale, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
 
-        // ------------------------------------------
         // F. スタジアメトリック・レンジファインダー（右下測距曲線）
-        // ------------------------------------------
         if (state.hudStyle !== 'sniper') {
           const rfX = cx + 62 * scale;
           const rfY = cy + 68 * scale;
@@ -1188,9 +1548,7 @@
           ctx.restore();
         }
 
-        // ------------------------------------------
-        // G. 周辺テレメトリー情報（日時タイムスタンプ・ズーム倍率・擬似方位・推定距離）
-        // ------------------------------------------
+        // G. 周辺テレメトリ情報（日時タイムスタンプ・ズーム倍率・擬似方位・推定距離）
         if (state.showTelemetry) {
           const now = new Date();
           const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -1205,7 +1563,6 @@
           ctx.font = `700 ${fontSize}px "JetBrains Mono", monospace`;
           ctx.fillStyle = hudGreen;
 
-          // 左上テレメトリー
           ctx.textAlign = 'left';
           const leftTextX = marginX + 10 * scale;
           const topTextY = marginY + 18 * scale;
@@ -1213,7 +1570,6 @@
           ctx.fillText(`ZM  // ${state.zoom.toFixed(1)}X`, leftTextX, topTextY + fontSize * 1.35);
           ctx.fillText(`RNG // ~${estRange}M`, leftTextX, topTextY + fontSize * 2.7);
 
-          // 右上テレメトリー
           ctx.textAlign = 'right';
           const rightTextX = w - marginX - 10 * scale;
           ctx.fillText(`${dateStr} ${timeStr}`, rightTextX, topTextY);
@@ -1221,16 +1577,13 @@
           ctx.fillText(`ROL ${activeRoll >= 0 ? '+' : ''}${activeRoll.toFixed(1)}°`, rightTextX, topTextY + fontSize * 2.7);
         }
 
-        // ------------------------------------------
-        // H. 画面タップ時のターゲットロックオン演出（静止ロックオン枠＋座標＋ピント風エフェクト）
-        // ------------------------------------------
+        // H. 画面タップ時のターゲットロックオン演出
         if (state.targetLock) {
           const elapsed = nowSec - state.targetLock.createdAt;
           if (elapsed < 3.5) {
             const tx = state.targetLock.xRatio * w;
             const ty = state.targetLock.yRatio * h;
             const alpha = Math.max(0, 1 - elapsed / 3.5);
-            // 最初の0.22秒だけスッとピントが合うように収束し、その後は完全に静止
             const snapOffset = elapsed < 0.22 ? (1 - elapsed / 0.22) * 18 : 0;
             const boxSize = (24 + snapOffset) * scale;
 
@@ -1258,7 +1611,6 @@
             ctx.lineTo(tx + boxSize, ty + boxSize - c);
             ctx.stroke();
 
-            // 中央極小ピントクロス
             ctx.beginPath();
             ctx.moveTo(tx - 4 * scale, ty);
             ctx.lineTo(tx + 4 * scale, ty);
@@ -1279,7 +1631,7 @@
       }
 
       // ==========================================
-      // 8. メイン描画ループ（60fps）
+      // 10. メイン描画ループ（60fps）
       // ==========================================
       function renderLoop(nowMs) {
         const nowSec = nowMs / 1000;
@@ -1290,6 +1642,8 @@
           state.frameCounter = 0;
           state.lastFrameTime = nowMs;
         }
+
+        updateDialPhysicsAndRender();
 
         const w = dom.displayCanvas.width;
         const h = dom.displayCanvas.height;
@@ -1315,7 +1669,7 @@
       }
 
       // ==========================================
-      // 9. 無音写真撮影（JPEGキャプチャ）
+      // 11. 無音写真撮影（JPEGキャプチャ）
       // ==========================================
       function captureSilentPhoto() {
         try {
@@ -1366,7 +1720,7 @@
       }
 
       // ==========================================
-      // 10. 無音動画録画（MediaRecorder / 音声トラックなし）
+      // 12. 無音動画録画（MediaRecorder / 音声トラックなし）
       // ==========================================
       function toggleSilentVideoRecording() {
         if (state.isRecording) {
@@ -1396,10 +1750,8 @@
             drawMilitaryHUD(captureCtx, captureCanvas.width, captureCanvas.height, nowSec);
           }
 
-          // Canvasから30fpsの映像ストリームのみを取得（音声トラックはゼロ＝完全無音）
           const canvasStream = captureCanvas.captureStream(30);
 
-          // iOS Safari (video/mp4) / Android Chrome・PC (video/webm) 両対応MIME自動判定
           const mimeCandidates = [
             'video/mp4;codecs=avc1',
             'video/mp4',
@@ -1507,7 +1859,7 @@
       }
 
       // ==========================================
-      // 11. ギャラリーデータ管理＆Web Share API共有
+      // 13. ギャラリーデータ管理・Web Share API共有・一括ZIPダウンロード
       // ==========================================
       function addMediaItem(item) {
         state.mediaItems.unshift(item);
@@ -1542,6 +1894,7 @@
           dom.previewVideo.classList.add('hidden');
           dom.previewVideo.pause();
           dom.galleryActionBar.classList.add('hidden');
+          dom.btnDownloadAllMedia.classList.add('hidden');
           dom.btnClearAllMedia.classList.add('hidden');
           dom.galleryThumbnails.innerHTML = '';
           return;
@@ -1549,6 +1902,7 @@
 
         dom.galleryEmptyState.classList.add('hidden');
         dom.galleryActionBar.classList.remove('hidden');
+        dom.btnDownloadAllMedia.classList.remove('hidden');
         dom.btnClearAllMedia.classList.remove('hidden');
 
         if (state.selectedMediaIndex < 0 || state.selectedMediaIndex >= count) {
@@ -1593,6 +1947,171 @@
         });
       }
 
+      // 純粋JavaScript製 無劣化ZIPアーカイブビルダー（外部CDN不要・スマホ/PC確実動作）
+      const crcTable = (() => {
+        const table = new Uint32Array(256);
+        for (let i = 0; i < 256; i++) {
+          let c = i;
+          for (let k = 0; k < 8; k++) {
+            c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+          }
+          table[i] = c >>> 0;
+        }
+        return table;
+      })();
+
+      function computeCrc32(uint8) {
+        let crc = 0xffffffff;
+        for (let i = 0; i < uint8.length; i++) {
+          crc = crcTable[(crc ^ uint8[i]) & 0xff] ^ (crc >>> 8);
+        }
+        return (crc ^ 0xffffffff) >>> 0;
+      }
+
+      function getDosDateTime(date = new Date()) {
+        const year = Math.max(1980, date.getFullYear());
+        const dosTime = ((date.getHours() & 0x1f) << 11) |
+                        ((date.getMinutes() & 0x3f) << 5) |
+                        ((Math.floor(date.getSeconds() / 2)) & 0x1f);
+        const dosDate = (((year - 1980) & 0x7f) << 9) |
+                        (((date.getMonth() + 1) & 0x0f) << 5) |
+                        (date.getDate() & 0x1f);
+        return { dosTime, dosDate };
+      }
+
+      async function downloadAllMediaAsZip() {
+        const count = state.mediaItems.length;
+        if (count === 0) return;
+
+        // 1件のみの場合はそのまま単体ファイルをダウンロード
+        if (count === 1) {
+          const single = state.mediaItems[0];
+          const a = document.createElement('a');
+          a.href = single.url;
+          a.download = single.filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          showToast('SAVED // 撮影データを保存しました');
+          return;
+        }
+
+        try {
+          dom.btnDownloadAllMedia.disabled = true;
+          showToast(`PACKING // 全${count}件を一括ZIP化しています...`);
+
+          const encoder = new TextEncoder();
+          const { dosTime, dosDate } = getDosDateTime(new Date());
+          const fileParts = [];
+          const centralDirRecords = [];
+          let offset = 0;
+
+          // 古い順（撮影順）でアーカイブに格納
+          const orderedItems = [...state.mediaItems].reverse();
+          const usedNames = new Set();
+
+          for (let i = 0; i < orderedItems.length; i++) {
+            const item = orderedItems[i];
+            let safeName = item.filename;
+            if (usedNames.has(safeName)) {
+              const dotIdx = safeName.lastIndexOf('.');
+              safeName = dotIdx > 0
+                ? `${safeName.slice(0, dotIdx)}_${i + 1}${safeName.slice(dotIdx)}`
+                : `${safeName}_${i + 1}`;
+            }
+            usedNames.add(safeName);
+
+            const nameBytes = encoder.encode(safeName);
+            const arrayBuf = await item.blob.arrayBuffer();
+            const dataBytes = new Uint8Array(arrayBuf);
+            const crc = computeCrc32(dataBytes);
+            const size = dataBytes.length;
+
+            // Local File Header (30 bytes + filename)
+            const localHeader = new Uint8Array(30 + nameBytes.length);
+            const lv = new DataView(localHeader.buffer);
+            lv.setUint32(0, 0x04034b50, true); // Local file header signature
+            lv.setUint16(4, 20, true);         // Version needed (2.0)
+            lv.setUint16(6, 0x0800, true);     // UTF-8 flag
+            lv.setUint16(8, 0, true);          // Compression method: 0 (STORE / 無圧縮)
+            lv.setUint16(10, dosTime, true);
+            lv.setUint16(12, dosDate, true);
+            lv.setUint32(14, crc, true);
+            lv.setUint32(18, size, true);      // Compressed size
+            lv.setUint32(22, size, true);      // Uncompressed size
+            lv.setUint16(26, nameBytes.length, true);
+            lv.setUint16(28, 0, true);         // Extra field length
+            localHeader.set(nameBytes, 30);
+
+            fileParts.push(localHeader, dataBytes);
+
+            // Central Directory File Header (46 bytes + filename)
+            const cdHeader = new Uint8Array(46 + nameBytes.length);
+            const cv = new DataView(cdHeader.buffer);
+            cv.setUint32(0, 0x02014b50, true); // Central directory signature
+            cv.setUint16(4, 20, true);         // Version made by
+            cv.setUint16(6, 20, true);         // Version needed
+            cv.setUint16(8, 0x0800, true);     // UTF-8 flag
+            cv.setUint16(10, 0, true);         // Compression: STORE
+            cv.setUint16(12, dosTime, true);
+            cv.setUint16(14, dosDate, true);
+            cv.setUint32(16, crc, true);
+            cv.setUint32(20, size, true);
+            cv.setUint32(24, size, true);
+            cv.setUint16(28, nameBytes.length, true);
+            cv.setUint16(30, 0, true);         // Extra length
+            cv.setUint16(32, 0, true);         // Comment length
+            cv.setUint16(34, 0, true);         // Disk number start
+            cv.setUint16(36, 0, true);         // Internal attributes
+            cv.setUint32(38, 0, true);         // External attributes
+            cv.setUint32(42, offset, true);    // Relative offset of local header
+            cdHeader.set(nameBytes, 46);
+
+            centralDirRecords.push(cdHeader);
+            offset += localHeader.length + dataBytes.length;
+          }
+
+          const cdOffset = offset;
+          let cdSize = 0;
+          for (const rec of centralDirRecords) {
+            fileParts.push(rec);
+            cdSize += rec.length;
+          }
+
+          // End of Central Directory Record (22 bytes)
+          const eocd = new Uint8Array(22);
+          const ev = new DataView(eocd.buffer);
+          ev.setUint32(0, 0x06054b50, true);
+          ev.setUint16(4, 0, true);
+          ev.setUint16(6, 0, true);
+          ev.setUint16(8, orderedItems.length, true);
+          ev.setUint16(10, orderedItems.length, true);
+          ev.setUint32(12, cdSize, true);
+          ev.setUint32(16, cdOffset, true);
+          ev.setUint16(20, 0, true);
+          fileParts.push(eocd);
+
+          const zipBlob = new Blob(fileParts, { type: 'application/zip' });
+          const zipUrl = URL.createObjectURL(zipBlob);
+          const zipFilename = generateTimestampFilename('SILENT_CAM_ALL', 'zip');
+
+          const a = document.createElement('a');
+          a.href = zipUrl;
+          a.download = zipFilename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+
+          setTimeout(() => URL.revokeObjectURL(zipUrl), 15000);
+          showToast(`BATCH SAVED // 全${count}件を一括保存しました`);
+        } catch (err) {
+          console.error('一括ダウンロードエラー:', err);
+          showToast('ERROR // 一括保存に失敗しました');
+        } finally {
+          dom.btnDownloadAllMedia.disabled = false;
+        }
+      }
+
       async function shareCurrentMedia() {
         if (state.selectedMediaIndex < 0 || state.selectedMediaIndex >= state.mediaItems.length) return;
         const current = state.mediaItems[state.selectedMediaIndex];
@@ -1609,7 +2128,6 @@
               return;
             }
           }
-          // Web Share API非対応環境（PC等）ではダウンロードへフォールバック
           dom.btnDownloadCurrent.click();
           showToast('DOWNLOAD // 端末へのダウンロードを開始');
         } catch (err) {
@@ -1621,7 +2139,7 @@
       }
 
       // ==========================================
-      // 12. UI状態同期ヘルパー
+      // 14. UI状態同期ヘルパー
       // ==========================================
       function syncHudControlsUI() {
         if (state.hudEnabled) {
@@ -1679,22 +2197,39 @@
         }
       }
 
-      function setZoom(val) {
-        state.zoom = Math.min(4.0, Math.max(1.0, Number(val)));
-        dom.zoomSlider.value = state.zoom;
-        dom.zoomValueText.textContent = `${state.zoom.toFixed(1)}x`;
+      function setZoom(val, skipHaptic = false) {
+        const clamped = Math.min(state.maxZoom, Math.max(state.minZoom, Number(val)));
+        state.zoom = clamped;
 
-        dom.zoomPresetBtns.forEach(btn => {
-          const preset = Number(btn.dataset.zoom);
-          const isNear = Math.abs(state.zoom - preset) < 0.15;
-          btn.className = isNear
-            ? 'zoom-preset-btn min-h-[32px] px-2.5 py-1 rounded-full text-[11px] font-mono font-bold bg-[#00ff66]/20 text-[#00ff66] border border-[#00ff66]/50 active:scale-95 transition'
-            : 'zoom-preset-btn min-h-[32px] px-2.5 py-1 rounded-full text-[11px] font-mono text-neutral-400 hover:text-white active:scale-95 transition';
-        });
+        // ハードウェアズーム（光学・カメラAPIネイティブズーム）＋デジタルズーム補完
+        let appliedHw = 1.0;
+        if (state.hwZoomSupported && state.stream && !state.isDemoMode) {
+          const track = state.stream.getVideoTracks()[0];
+          if (track && typeof track.applyConstraints === 'function') {
+            const targetHw = Math.min(state.hwMaxZoom, Math.max(state.hwMinZoom, clamped));
+            if (Math.abs(targetHw - state.lastAppliedHwZoom) >= 0.02) {
+              state.lastAppliedHwZoom = targetHw;
+              track.applyConstraints({ advanced: [{ zoom: targetHw }] }).catch(() => {});
+            }
+            appliedHw = targetHw;
+          }
+        }
+        state.effectiveDigitalZoom = clamped / appliedHw;
+
+        // 目盛り通過時の極小クリック触覚フィードバック（音は一切鳴らない）
+        const tickIndex = Math.round(clamped * 10);
+        if (!skipHaptic && tickIndex !== state.lastHapticTick) {
+          state.lastHapticTick = tickIndex;
+          if (typeof navigator.vibrate === 'function') {
+            try { navigator.vibrate(3); } catch (_) {}
+          }
+        }
+
+        updateZoomPresetHighlights();
       }
 
       // ==========================================
-      // 13. ジャイロ・傾きセンサー連携
+      // 15. ジャイロ・傾きセンサー連携
       // ==========================================
       function handleDeviceOrientation(event) {
         if (typeof event.beta === 'number' && typeof event.gamma === 'number') {
@@ -1728,7 +2263,7 @@
       }
 
       // ==========================================
-      // 14. タッチ操作（2本指ピンチズーム & 1本指タップロックオン）
+      // 16. タッチ操作（2本指ピンチズーム & 1本指タップロックオン）
       // ==========================================
       function getTouchDistance(t1, t2) {
         const dx = t1.clientX - t2.clientX;
@@ -1751,6 +2286,8 @@
         if (e.touches.length === 2) {
           e.preventDefault();
           state.isPinching = true;
+          state.dialTargetZoom = null;
+          state.dialVelocity = 0;
           state.pinchStartDist = getTouchDistance(e.touches[0], e.touches[1]);
           state.pinchStartZoom = state.zoom;
         } else if (e.touches.length === 1 && !state.isPinching) {
@@ -1775,13 +2312,12 @@
         }
       });
 
-      // PCマウスクリックでのロックオンにも対応
       dom.displayCanvas.addEventListener('click', (e) => {
         triggerTargetLockAtClientXY(e.clientX, e.clientY);
       });
 
       // ==========================================
-      // 15. イベントリスナー登録
+      // 17. イベントリスナー登録
       // ==========================================
       dom.btnRetryCamera.addEventListener('click', initCamera);
       dom.btnStartDemo.addEventListener('click', startDemoMode);
@@ -1813,11 +2349,6 @@
           state.hudStyle = btn.dataset.modalStyle;
           syncHudControlsUI();
         });
-      });
-
-      dom.zoomSlider.addEventListener('input', (e) => setZoom(e.target.value));
-      dom.zoomPresetBtns.forEach(btn => {
-        btn.addEventListener('click', () => setZoom(btn.dataset.zoom));
       });
 
       dom.modePhotoBtn.addEventListener('click', () => {
@@ -1869,7 +2400,7 @@
       });
       dom.btnRequestGyro.addEventListener('click', enableOrientationSensor);
 
-      // ギャラリーモーダル開閉・共有・削除操作
+      // ギャラリーモーダル開閉・共有・一括保存・削除操作
       dom.btnOpenGallery.addEventListener('click', () => {
         renderGalleryModal();
         dom.galleryModal.classList.remove('hidden');
@@ -1879,6 +2410,7 @@
         dom.galleryModal.classList.add('hidden');
       });
       dom.btnShareCurrent.addEventListener('click', shareCurrentMedia);
+      dom.btnDownloadAllMedia.addEventListener('click', downloadAllMediaAsZip);
 
       dom.btnDeleteCurrent.addEventListener('click', () => {
         if (state.selectedMediaIndex >= 0 && state.selectedMediaIndex < state.mediaItems.length) {
@@ -1909,14 +2441,14 @@
       dom.btnDoneHelp.addEventListener('click', () => dom.helpModal.classList.add('hidden'));
 
       // ==========================================
-      // 16. アプリ起動エントリーポイント
+      // 18. アプリ起動エントリーポイント
       // ==========================================
       window.addEventListener('load', () => {
         resizeDisplayCanvas();
         syncHudControlsUI();
         syncBurnSettingUI();
         syncShutterButtonAppearance();
-        setZoom(1.0);
+        configureDeviceZoomRange(null);
 
         if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission !== 'function') {
           window.addEventListener('deviceorientation', handleDeviceOrientation);
