@@ -1,0 +1,1931 @@
+<!DOCTYPE html>
+<html lang="ja" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>SILENT TACTICAL CAM | サイレント＆ミリタリーHUDカメラ</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Inter & JetBrains Mono (計器・テレメトリー表示用) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'Hiragino Kaku Gothic ProN', 'Meiryo', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            hud: {
+              green: '#00ff66',
+              emerald: '#10b981',
+              dim: 'rgba(0, 255, 102, 0.25)',
+              dark: '#050a07',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* 全画面固定（100dvh対応）・スクロール防止・タッチ操作最適化 */
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100dvh;
+      min-height: -webkit-fill-available;
+      overflow: hidden;
+      background-color: #050706;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* セーフエリア（iPhoneノッチ・ホームバー・Androidナビゲーションバー）考慮 */
+    .safe-header {
+      padding-top: max(0.75rem, env(safe-area-inset-top));
+      padding-left: max(0.875rem, env(safe-area-inset-left));
+      padding-right: max(0.875rem, env(safe-area-inset-right));
+    }
+
+    .safe-footer {
+      padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+      padding-left: max(0.875rem, env(safe-area-inset-left));
+      padding-right: max(0.875rem, env(safe-area-inset-right));
+    }
+
+    .safe-modal-bottom {
+      padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+    }
+
+    /* カスタムレンジスライダー（ズーム調整用・親指操作しやすいサイズ） */
+    input[type="range"].tactical-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      background: rgba(255, 255, 255, 0.2);
+      height: 6px;
+      border-radius: 999px;
+      outline: none;
+    }
+    input[type="range"].tactical-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #00ff66;
+      border: 2px solid #050a07;
+      box-shadow: 0 0 12px rgba(0, 255, 102, 0.85);
+      cursor: pointer;
+    }
+    input[type="range"].tactical-slider::-moz-range-thumb {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #00ff66;
+      border: 2px solid #050a07;
+      box-shadow: 0 0 12px rgba(0, 255, 102, 0.85);
+      cursor: pointer;
+    }
+
+    /* シャッターフラッシュアニメーション */
+    @keyframes shutterFlash {
+      0% { opacity: 0.85; }
+      100% { opacity: 0; }
+    }
+    .animate-shutter {
+      animation: shutterFlash 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    /* 録画インジケーター＆外周フレームパルス */
+    @keyframes recPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
+    .animate-rec {
+      animation: recPulse 1.1s infinite ease-in-out;
+    }
+
+    /* スクロールバー非表示（ギャラリー内） */
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+  </style>
+</head>
+<body class="text-white antialiased">
+
+  <!-- メインアプリコンテナ（100dvhでモバイルアドレスバー伸縮に対応） -->
+  <div id="app-root" class="relative w-full h-[100dvh] flex flex-col justify-between bg-black overflow-hidden">
+
+    <!-- ==================== 1. カメラ＆HUD ビューポート ==================== -->
+    <div id="viewfinder-container" class="absolute inset-0 w-full h-full overflow-hidden bg-neutral-950">
+      <!-- 非表示のカメラ映像ソース（iOS Safari必須の playsinline muted autoplay 指定） -->
+      <video id="camera-video" class="hidden" playsinline autoplay muted></video>
+
+      <!-- メイン表示用キャンバス（touch-action: none で2本指ピンチズームとタップを直接制御） -->
+      <canvas id="display-canvas" class="block w-full h-full cursor-crosshair touch-none"></canvas>
+
+      <!-- 録画中の外周パルス枠表示 -->
+      <div id="rec-border-frame" class="hidden pointer-events-none absolute inset-0 border-[3px] border-red-500/80 shadow-[inset_0_0_24px_rgba(239,68,68,0.35)] animate-rec z-20"></div>
+
+      <!-- 無音撮影時の視覚フラッシュ演出 -->
+      <div id="shutter-flash" class="pointer-events-none absolute inset-0 bg-white opacity-0 z-20"></div>
+
+      <!-- 撮影完了 / ステータス通知トースト -->
+      <div id="toast-banner" class="pointer-events-none absolute top-20 left-1/2 -translate-x-1/2 z-30 transition-all duration-300 opacity-0 -translate-y-2 w-max max-w-[90vw]">
+        <div class="flex items-center gap-2 px-4 py-2 rounded-full bg-black/85 border border-[#00ff66]/60 shadow-[0_0_20px_rgba(0,255,102,0.25)] backdrop-blur-md">
+          <span class="w-2 h-2 rounded-full bg-[#00ff66] shrink-0"></span>
+          <span id="toast-text" class="text-xs font-mono font-bold tracking-wider text-[#00ff66] truncate">CAPTURED // 無音撮影完了</span>
+        </div>
+      </div>
+
+      <!-- 録画中インジケーター（RECバッジ＆経過時間） -->
+      <div id="rec-indicator" class="hidden pointer-events-none absolute top-16 left-1/2 -translate-x-1/2 z-30">
+        <div class="flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-red-950/90 border border-red-500/80 shadow-[0_0_20px_rgba(239,68,68,0.45)] backdrop-blur-md">
+          <span class="w-2.5 h-2.5 rounded-full bg-red-500 animate-rec"></span>
+          <span class="text-xs font-mono font-bold tracking-widest text-red-400">REC</span>
+          <span id="rec-timer" class="text-xs font-mono font-bold text-white">00:00</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-black/50 text-neutral-300">無音録画</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== 2. カメラ未接続 / フォールバック案内オーバーレイ ==================== -->
+    <div id="fallback-overlay" class="hidden absolute inset-0 z-40 bg-neutral-950/95 backdrop-blur-md flex items-center justify-center p-5">
+      <div class="max-w-md w-full rounded-2xl bg-neutral-900 border border-neutral-800 p-6 shadow-2xl text-center space-y-5">
+        <div class="w-14 h-14 mx-auto rounded-2xl bg-[#00ff66]/10 border border-[#00ff66]/40 flex items-center justify-center text-[#00ff66]">
+          <svg class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+        </div>
+        <div class="space-y-2">
+          <h2 class="text-lg font-bold text-white">カメラへのアクセスが必要です</h2>
+          <p id="fallback-reason" class="text-xs sm:text-sm text-neutral-400 leading-relaxed">
+            ブラウザのカメラ許可がオフになっているか、利用可能なカメラデバイスが見つかりませんでした。設定からカメラを許可して再試行するか、模擬映像のデモモードをお試しください。
+          </p>
+        </div>
+        <div class="flex flex-col sm:flex-row gap-3 pt-1">
+          <button id="btn-retry-camera" class="min-h-[46px] flex-1 py-3 px-4 rounded-xl bg-neutral-800 hover:bg-neutral-700 active:scale-[0.98] text-sm font-semibold text-white transition">
+            再試行する
+          </button>
+          <button id="btn-start-demo" class="min-h-[46px] flex-1 py-3 px-4 rounded-xl bg-[#00ff66] hover:bg-[#00e65c] active:scale-[0.98] text-sm font-bold text-black shadow-[0_0_20px_rgba(0,255,102,0.3)] transition">
+            デモモードで起動
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== 3. 上部コントロールバー（セーフエリア対応） ==================== -->
+    <header class="relative z-20 safe-header flex items-center justify-between pb-2 bg-gradient-to-b from-black/85 via-black/45 to-transparent">
+      <!-- 左：無音ステータス＆デモバッジ -->
+      <div class="flex items-center gap-2">
+        <div class="min-h-[38px] flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/70 border border-white/15 backdrop-blur-md">
+          <svg class="w-4 h-4 text-[#00ff66]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+          </svg>
+          <span class="text-xs font-semibold tracking-wide text-neutral-100">完全無音</span>
+        </div>
+        <span id="demo-badge" class="hidden px-2.5 py-1 rounded-full bg-amber-500/20 border border-amber-400/50 text-[10px] font-mono font-bold text-amber-300">
+          DEMO
+        </span>
+      </div>
+
+      <!-- 右：アクションボタン群（すべて44px以上のタップ領域を確保） -->
+      <div class="flex items-center gap-2">
+        <!-- カメラ前後切替ボタン -->
+        <button id="btn-switch-camera" title="フロント/バックカメラ切替" aria-label="カメラ前後切替" class="w-11 h-11 flex items-center justify-center rounded-full bg-black/70 hover:bg-neutral-800/90 active:scale-95 border border-white/15 backdrop-blur-md text-white transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        </button>
+
+        <!-- 使い方・マナー案内ボタン -->
+        <button id="btn-open-help" title="ガイド・仕様" aria-label="ガイド・仕様" class="w-11 h-11 flex items-center justify-center rounded-full bg-black/70 hover:bg-neutral-800/90 active:scale-95 border border-white/15 backdrop-blur-md text-white transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </button>
+
+        <!-- HUDカスタマイズ設定パネルボタン -->
+        <button id="btn-open-settings" title="照準HUD設定" aria-label="照準HUD設定" class="min-w-[44px] h-11 flex items-center justify-center gap-1.5 px-3 rounded-full bg-black/70 hover:bg-neutral-800/90 active:scale-95 border border-[#00ff66]/45 backdrop-blur-md text-[#00ff66] transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          <span class="text-xs font-semibold hidden sm:inline">HUD設定</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- ==================== 4. 下部コントロールデッキ（片手・親指操作＆セーフエリア対応） ==================== -->
+    <footer class="relative z-20 safe-footer flex flex-col items-center gap-2.5 pt-3 bg-gradient-to-t from-black/95 via-black/80 to-transparent">
+
+      <!-- 4-1. 軍用照準クイックバー（ON/OFF & スタイル切替） -->
+      <div class="w-full max-w-md flex items-center justify-between gap-1.5 p-1.5 rounded-2xl bg-black/75 border border-white/15 backdrop-blur-md">
+        <!-- 照準ON/OFFメインスイッチ -->
+        <button id="btn-toggle-hud" class="min-h-[38px] shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#00ff66]/20 border border-[#00ff66] text-[#00ff66] text-xs font-bold transition active:scale-95">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="8" />
+            <line x1="12" y1="2" x2="12" y2="6" />
+            <line x1="12" y1="18" x2="12" y2="22" />
+            <line x1="2" y1="12" x2="6" y2="12" />
+            <line x1="18" y1="12" x2="22" y2="12" />
+          </svg>
+          <span id="hud-toggle-label">照準: ON</span>
+        </button>
+
+        <!-- スタイル選択チップ -->
+        <div id="hud-style-chips" class="flex items-center gap-1 overflow-x-auto no-scrollbar">
+          <button data-style="standard" class="hud-style-btn min-h-[38px] px-2.5 py-1.5 rounded-xl text-[11px] font-semibold bg-[#00ff66] text-black transition whitespace-nowrap">
+            標準HUD
+          </button>
+          <button data-style="sniper" class="hud-style-btn min-h-[38px] px-2.5 py-1.5 rounded-xl text-[11px] font-semibold text-neutral-300 hover:bg-white/10 transition whitespace-nowrap">
+            スナイパー
+          </button>
+          <button data-style="nvg" class="hud-style-btn min-h-[38px] px-2.5 py-1.5 rounded-xl text-[11px] font-semibold text-neutral-300 hover:bg-white/10 transition whitespace-nowrap">
+            暗視NVG
+          </button>
+        </div>
+      </div>
+
+      <!-- 4-2. デジタルズームコントロール（ピンチ操作＋ワンタップ倍率 1.0x / 2.0x / 4.0x） -->
+      <div class="w-full max-w-md flex items-center gap-2.5 px-2">
+        <div class="flex items-center gap-1 shrink-0">
+          <button data-zoom="1" class="zoom-preset-btn min-h-[32px] px-2.5 py-1 rounded-full text-[11px] font-mono font-bold bg-[#00ff66]/20 text-[#00ff66] border border-[#00ff66]/50 active:scale-95 transition">1.0x</button>
+          <button data-zoom="2" class="zoom-preset-btn min-h-[32px] px-2.5 py-1 rounded-full text-[11px] font-mono text-neutral-400 hover:text-white active:scale-95 transition">2.0x</button>
+          <button data-zoom="4" class="zoom-preset-btn min-h-[32px] px-2.5 py-1 rounded-full text-[11px] font-mono text-neutral-400 hover:text-white active:scale-95 transition">4.0x</button>
+        </div>
+        <input id="zoom-slider" type="range" min="1" max="4" step="0.05" value="1" class="tactical-slider flex-1" aria-label="ズーム倍率" />
+        <span id="zoom-value-text" class="w-11 text-right text-xs font-mono font-bold text-[#00ff66] shrink-0">1.0x</span>
+      </div>
+
+      <!-- 4-3. 撮影モード切替タブ（写真 / 動画） -->
+      <div class="flex items-center gap-1 p-1 rounded-full bg-neutral-900/95 border border-white/10">
+        <button id="mode-photo-btn" class="min-h-[34px] px-4 py-1 rounded-full text-xs font-bold bg-white text-black transition">
+          写真 (無音)
+        </button>
+        <button id="mode-video-btn" class="min-h-[34px] px-4 py-1 rounded-full text-xs font-bold text-neutral-400 hover:text-white transition">
+          動画 (無音)
+        </button>
+      </div>
+
+      <!-- 4-4. メインシャッター＆ギャラリー＆焼き込みトグル -->
+      <div class="w-full max-w-md flex items-center justify-between px-3 pt-0.5">
+        <!-- 左：ギャラリーサムネイルボタン -->
+        <button id="btn-open-gallery" class="relative w-14 h-14 rounded-2xl bg-neutral-900 border-2 border-white/25 overflow-hidden flex items-center justify-center shadow-lg active:scale-95 transition" title="撮影した写真・動画一覧" aria-label="ギャラリーを開く">
+          <img id="latest-thumb-img" src="" alt="最新プレビュー" class="hidden w-full h-full object-cover" />
+          <div id="empty-thumb-placeholder" class="flex flex-col items-center justify-center text-neutral-500">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <!-- 保存件数バッジ -->
+          <span id="gallery-count-badge" class="hidden absolute bottom-1 right-1 px-1.5 py-0.2 rounded-md bg-black/85 border border-[#00ff66]/60 text-[10px] font-mono font-bold text-[#00ff66]">0</span>
+        </button>
+
+        <!-- 中央：大型シャッター / 録画ボタン -->
+        <button id="btn-shutter" aria-label="シャッター / 録画開始" class="relative w-20 h-20 rounded-full p-1.5 border-4 border-white/90 flex items-center justify-center shadow-[0_0_25px_rgba(0,0,0,0.65)] active:scale-95 transition">
+          <div id="shutter-inner" class="w-full h-full rounded-full bg-white transition-all duration-200 flex items-center justify-center">
+            <div id="shutter-inner-ring" class="w-12 h-12 rounded-full border-2 border-black/15"></div>
+          </div>
+        </button>
+
+        <!-- 右：「照準を写真・動画に焼き込む」クイック切替ボタン -->
+        <button id="btn-quick-burn" class="w-14 h-14 rounded-2xl bg-neutral-900/90 border border-[#00ff66]/55 flex flex-col items-center justify-center gap-0.5 text-[#00ff66] active:scale-95 transition" title="撮影したデータに照準を含めるか切り替え" aria-label="照準記録切り替え">
+          <svg id="burn-icon-on" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+          </svg>
+          <span class="text-[9px] font-bold leading-tight text-center">照準記録</span>
+          <span id="burn-status-badge" class="text-[9px] font-mono font-bold px-1.5 rounded bg-[#00ff66] text-black">ON</span>
+        </button>
+      </div>
+    </footer>
+
+    <!-- ==================== 5. HUDカスタマイズ設定モーダル ==================== -->
+    <div id="settings-modal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div class="w-full max-w-md rounded-t-3xl sm:rounded-3xl bg-neutral-900 border border-neutral-800 p-6 safe-modal-bottom shadow-2xl space-y-4 max-h-[88dvh] overflow-y-auto">
+        <div class="flex items-center justify-between border-b border-neutral-800 pb-3">
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-[#00ff66]"></span>
+            <h3 class="text-base font-bold text-white">軍用照準（HUD）カスタマイズ</h3>
+          </div>
+          <button id="btn-close-settings" aria-label="設定を閉じる" class="w-10 h-10 flex items-center justify-center rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-300">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- 設定項目リスト -->
+        <div class="space-y-3.5">
+          <!-- 1. 照準オーバーレイ表示 -->
+          <div class="flex items-center justify-between p-3.5 rounded-2xl bg-neutral-950 border border-neutral-800">
+            <div>
+              <div class="text-sm font-bold text-white">軍用照準オーバーレイ</div>
+              <div class="text-xs text-neutral-400">画面上にタクティカルHUDを表示します</div>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input id="setting-hud-enabled" type="checkbox" checked class="sr-only peer">
+              <div class="w-11 h-6 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00ff66]"></div>
+            </label>
+          </div>
+
+          <!-- 2. 照準スタイル選択 -->
+          <div class="p-3.5 rounded-2xl bg-neutral-950 border border-neutral-800 space-y-2.5">
+            <div class="text-sm font-bold text-white">照準スタイル選択</div>
+            <div class="grid grid-cols-3 gap-2">
+              <button type="button" data-modal-style="standard" class="modal-style-btn min-h-[54px] p-2 rounded-xl border border-[#00ff66] bg-[#00ff66]/15 text-[#00ff66] text-xs font-bold text-center">
+                スタンダード<br><span class="text-[10px] font-normal opacity-80">標準HUD</span>
+              </button>
+              <button type="button" data-modal-style="sniper" class="modal-style-btn min-h-[54px] p-2 rounded-xl border border-neutral-800 bg-neutral-900 text-neutral-300 text-xs font-bold text-center">
+                スナイパー<br><span class="text-[10px] font-normal opacity-80">測距グリッド</span>
+              </button>
+              <button type="button" data-modal-style="nvg" class="modal-style-btn min-h-[54px] p-2 rounded-xl border border-neutral-800 bg-neutral-900 text-neutral-300 text-xs font-bold text-center">
+                ナイトビジョン<br><span class="text-[10px] font-normal opacity-80">暗視グリーン</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 3. 照準を写真・動画に焼き込む（重要オプション） -->
+          <div class="flex items-center justify-between p-3.5 rounded-2xl bg-neutral-950 border border-[#00ff66]/35">
+            <div class="pr-3">
+              <div class="text-sm font-bold text-[#00ff66]">照準を写真・動画に焼き込む</div>
+              <div class="text-xs text-neutral-400 mt-0.5">
+                ON：照準や暗視フィルターごと保存・録画。<br>
+                OFF：画面のみ照準表示し、素の映像を保存。
+              </div>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer shrink-0">
+              <input id="setting-burn-hud" type="checkbox" checked class="sr-only peer">
+              <div class="w-11 h-6 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00ff66]"></div>
+            </label>
+          </div>
+
+          <!-- 4. グリッド線・テレメトリ情報・センサー・鏡像オプション -->
+          <div class="grid grid-cols-1 gap-2">
+            <div class="flex items-center justify-between p-3 rounded-2xl bg-neutral-950 border border-neutral-800">
+              <div>
+                <div class="text-xs font-bold text-white">タクティカルグリッド線</div>
+                <div class="text-[11px] text-neutral-400">構図合わせ用の極細グリーン補助線を表示</div>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input id="setting-show-grid" type="checkbox" class="sr-only peer">
+                <div class="w-10 h-5 bg-neutral-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#00ff66]"></div>
+              </label>
+            </div>
+
+            <div class="flex items-center justify-between p-3 rounded-2xl bg-neutral-950 border border-neutral-800">
+              <div>
+                <div class="text-xs font-bold text-white">周辺テレメトリ情報表示</div>
+                <div class="text-[11px] text-neutral-400">方位・ズーム倍率・日時タイムスタンプを表示</div>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input id="setting-show-telemetry" type="checkbox" checked class="sr-only peer">
+                <div class="w-10 h-5 bg-neutral-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#00ff66]"></div>
+              </label>
+            </div>
+
+            <div class="flex items-center justify-between p-3 rounded-2xl bg-neutral-950 border border-neutral-800">
+              <div>
+                <div class="text-xs font-bold text-white">傾きセンサー（水平器連動）</div>
+                <div class="text-[11px] text-neutral-400">端末の傾きに合わせて水平バーが傾斜</div>
+              </div>
+              <button id="btn-request-gyro" class="min-h-[36px] px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-xs font-semibold text-[#00ff66]">
+                センサー有効化
+              </button>
+            </div>
+
+            <div class="flex items-center justify-between p-3 rounded-2xl bg-neutral-950 border border-neutral-800">
+              <div>
+                <div class="text-xs font-bold text-white">インカメラ左右反転（鏡像）</div>
+                <div class="text-[11px] text-neutral-400">フロントカメラ時に自然なミラー表示</div>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input id="setting-mirror-front" type="checkbox" checked class="sr-only peer">
+                <div class="w-10 h-5 bg-neutral-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#00ff66]"></div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <button id="btn-done-settings" class="min-h-[46px] w-full py-3 rounded-2xl bg-[#00ff66] hover:bg-[#00e65c] text-black font-bold text-sm transition">
+          設定を閉じる
+        </button>
+      </div>
+    </div>
+
+    <!-- ==================== 6. ギャラリー＆プレビューモーダル（Web Share API共有対応） ==================== -->
+    <div id="gallery-modal" class="hidden fixed inset-0 z-50 bg-neutral-950 flex flex-col h-[100dvh]">
+      <!-- ギャラリーヘッダー -->
+      <div class="safe-header flex items-center justify-between pb-3 border-b border-neutral-800 bg-neutral-900/90 backdrop-blur-md">
+        <div class="flex items-center gap-2">
+          <h3 class="text-base font-bold text-white">撮影データ一覧</h3>
+          <span id="gallery-modal-count" class="px-2 py-0.5 rounded-full bg-neutral-800 text-xs font-mono text-[#00ff66]">0件</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btn-clear-all-media" class="hidden min-h-[38px] px-3 py-1.5 rounded-xl bg-red-950/60 hover:bg-red-900/70 border border-red-800/50 text-xs font-semibold text-red-300 transition">
+            すべて削除
+          </button>
+          <button id="btn-close-gallery" aria-label="ギャラリーを閉じる" class="w-10 h-10 flex items-center justify-center rounded-full bg-neutral-800 hover:bg-neutral-700 text-white transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- メインプレビュー＆リストコンテナ -->
+      <div class="flex-1 flex flex-col overflow-hidden">
+        <!-- 拡大プレビューエリア -->
+        <div id="gallery-preview-stage" class="flex-1 relative bg-black flex items-center justify-center p-4 overflow-hidden">
+          <div id="gallery-empty-state" class="text-center space-y-2 text-neutral-500">
+            <svg class="w-12 h-12 mx-auto opacity-40" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <p class="text-sm font-medium">まだ撮影された写真・動画はありません</p>
+            <p class="text-xs">シャッターボタンを押して無音撮影をお試しください</p>
+          </div>
+
+          <img id="preview-image" src="" alt="選択中の写真" class="hidden max-w-full max-h-full rounded-xl object-contain shadow-2xl border border-neutral-800" />
+          <video id="preview-video" controls playsinline class="hidden max-w-full max-h-full rounded-xl shadow-2xl border border-neutral-800"></video>
+        </div>
+
+        <!-- 選択中アイテムの操作バー（共有・ダウンロード・削除） -->
+        <div id="gallery-action-bar" class="hidden px-4 py-3 bg-neutral-900 border-t border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          <div class="min-w-0">
+            <div id="preview-meta-title" class="text-xs font-mono font-bold text-white truncate">SILENT_20261121.jpg</div>
+            <div id="preview-meta-sub" class="text-[11px] text-neutral-400">照準焼き込み: ON • 1280x720</div>
+          </div>
+          <div class="flex items-center justify-end gap-2 shrink-0">
+            <button id="btn-delete-current" class="w-11 h-11 flex items-center justify-center rounded-xl bg-neutral-800 hover:bg-red-950 text-neutral-300 hover:text-red-400 transition" title="削除" aria-label="削除">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
+            <!-- モバイル共有シートボタン（Web Share API） -->
+            <button id="btn-share-current" class="min-h-[44px] flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-white/15 text-white font-bold text-xs transition">
+              <svg class="w-4 h-4 text-[#00ff66]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+              </svg>
+              <span>共有</span>
+            </button>
+            <!-- 端末ダウンロード保存ボタン -->
+            <a id="btn-download-current" href="#" download="capture.jpg" class="min-h-[44px] flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#00ff66] hover:bg-[#00e65c] text-black font-bold text-xs shadow-[0_0_15px_rgba(0,255,102,0.3)] transition">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              <span>保存</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- サムネイル一覧ストリップ（下部セーフエリア考慮） -->
+        <div id="gallery-thumbnails" class="safe-footer flex items-center gap-2.5 px-4 pt-3 bg-neutral-950 border-t border-neutral-900 overflow-x-auto no-scrollbar min-h-[92px]">
+          <!-- JSでサムネイルカードを動的生成 -->
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== 7. ヘルプ・仕様ガイドモーダル ==================== -->
+    <div id="help-modal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="w-full max-w-md rounded-3xl bg-neutral-900 border border-neutral-800 p-6 shadow-2xl space-y-4">
+        <div class="flex items-center justify-between border-b border-neutral-800 pb-3">
+          <h3 class="text-base font-bold text-white">アプリ機能＆スマホ操作ガイド</h3>
+          <button id="btn-close-help" aria-label="ガイドを閉じる" class="w-10 h-10 flex items-center justify-center rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-300">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <ul class="space-y-2.5 text-xs text-neutral-300 leading-relaxed">
+          <li class="flex gap-2">
+            <span class="text-[#00ff66] font-bold">●</span>
+            <span><strong>完全無音撮影・録画：</strong>シャッター音を鳴らさずに写真キャプチャと音声なし動画録画（audio: false）が行えます。</span>
+          </li>
+          <li class="flex gap-2">
+            <span class="text-[#00ff66] font-bold">●</span>
+            <span><strong>スマホ直感操作：</strong>画面の<strong>2本指ピンチイン／ピンチアウト</strong>でスムーズなデジタルズーム（1.0x〜4.0x）、<strong>1本指タップ</strong>で任意地点へのターゲットロックオンが可能です。</span>
+          </li>
+          <li class="flex gap-2">
+            <span class="text-[#00ff66] font-bold">●</span>
+            <span><strong>照準焼き込み ON/OFF：</strong>「照準記録」をONにすると照準や暗視フィルターごと保存・録画し、OFFにすると素の映像のみを保存します。</span>
+          </li>
+          <li class="flex gap-2">
+            <span class="text-amber-400 font-bold">●</span>
+            <span><strong>マナー・プライバシー配慮：</strong>周囲のプライバシーや施設の撮影ルール・マナーを守ってご使用ください。</span>
+          </li>
+        </ul>
+        <button id="btn-done-help" class="min-h-[44px] w-full py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white font-semibold text-xs transition">
+          閉じる
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ==================== JavaScript メインロジック ==================== -->
+  <script>
+    (() => {
+      'use strict';
+
+      // ==========================================
+      // 1. アプリケーション状態管理 (State)
+      // ==========================================
+      const state = {
+        stream: null,
+        facingMode: 'environment', // 'environment' (バック) | 'user' (フロント)
+        isDemoMode: false,
+        captureMode: 'photo',      // 'photo' | 'video'
+        zoom: 1.0,                 // 1.0 ~ 4.0
+
+        // HUD設定
+        hudEnabled: true,
+        hudStyle: 'standard',      // 'standard' | 'sniper' | 'nvg'
+        burnHudInMedia: true,      // true: 写真・動画に照準を焼き込む / false: 映像のみ保存
+        showGrid: false,           // タクティカルグリッド線表示
+        showTelemetry: true,       // 周辺テレメトリ情報表示
+        mirrorFrontCamera: true,
+
+        // 録画状態
+        isRecording: false,
+        mediaRecorder: null,
+        recordedChunks: [],
+        recStartTime: 0,
+        recTimerInterval: null,
+
+        // センサー・テレメトリー用
+        pitch: 0,                  // 前後傾き（度）
+        roll: 0,                   // 左右傾き（度）
+        heading: 342,              // 方位角（0-359）
+        hasGyro: false,
+        fps: 60,
+        lastFrameTime: performance.now(),
+        frameCounter: 0,
+
+        // タップロックオン演出（静止ロックオン枠）
+        targetLock: null,          // { xRatio, yRatio, createdAt }
+
+        // ピンチズーム状態
+        pinchStartDist: 0,
+        pinchStartZoom: 1.0,
+        isPinching: false,
+
+        // ギャラリー保存データ（Blobオブジェクトも保持してWeb Share APIに対応）
+        mediaItems: [],            // { id, type: 'photo'|'video', blob, mimeType, url, thumbUrl, filename, timestamp, burnHud, resolution }
+        selectedMediaIndex: -1
+      };
+
+      // ==========================================
+      // 2. DOM要素の参照キャッシュ
+      // ==========================================
+      const dom = {
+        video: document.getElementById('camera-video'),
+        displayCanvas: document.getElementById('display-canvas'),
+        recBorderFrame: document.getElementById('rec-border-frame'),
+        shutterFlash: document.getElementById('shutter-flash'),
+        toastBanner: document.getElementById('toast-banner'),
+        toastText: document.getElementById('toast-text'),
+        recIndicator: document.getElementById('rec-indicator'),
+        recTimer: document.getElementById('rec-timer'),
+        fallbackOverlay: document.getElementById('fallback-overlay'),
+        fallbackReason: document.getElementById('fallback-reason'),
+        demoBadge: document.getElementById('demo-badge'),
+
+        // コントロールボタン
+        btnRetryCamera: document.getElementById('btn-retry-camera'),
+        btnStartDemo: document.getElementById('btn-start-demo'),
+        btnSwitchCamera: document.getElementById('btn-switch-camera'),
+        btnOpenHelp: document.getElementById('btn-open-help'),
+        btnOpenSettings: document.getElementById('btn-open-settings'),
+
+        // HUDクイックバー
+        btnToggleHud: document.getElementById('btn-toggle-hud'),
+        hudToggleLabel: document.getElementById('hud-toggle-label'),
+        hudStyleBtns: document.querySelectorAll('.hud-style-btn'),
+
+        // ズーム
+        zoomSlider: document.getElementById('zoom-slider'),
+        zoomValueText: document.getElementById('zoom-value-text'),
+        zoomPresetBtns: document.querySelectorAll('.zoom-preset-btn'),
+
+        // モード・シャッター・焼き込み
+        modePhotoBtn: document.getElementById('mode-photo-btn'),
+        modeVideoBtn: document.getElementById('mode-video-btn'),
+        btnShutter: document.getElementById('btn-shutter'),
+        shutterInner: document.getElementById('shutter-inner'),
+        shutterInnerRing: document.getElementById('shutter-inner-ring'),
+        btnQuickBurn: document.getElementById('btn-quick-burn'),
+        burnStatusBadge: document.getElementById('burn-status-badge'),
+
+        // ギャラリーサムネイル
+        btnOpenGallery: document.getElementById('btn-open-gallery'),
+        latestThumbImg: document.getElementById('latest-thumb-img'),
+        emptyThumbPlaceholder: document.getElementById('empty-thumb-placeholder'),
+        galleryCountBadge: document.getElementById('gallery-count-badge'),
+
+        // 設定モーダル
+        settingsModal: document.getElementById('settings-modal'),
+        btnCloseSettings: document.getElementById('btn-close-settings'),
+        btnDoneSettings: document.getElementById('btn-done-settings'),
+        settingHudEnabled: document.getElementById('setting-hud-enabled'),
+        settingBurnHud: document.getElementById('setting-burn-hud'),
+        settingShowGrid: document.getElementById('setting-show-grid'),
+        settingShowTelemetry: document.getElementById('setting-show-telemetry'),
+        settingMirrorFront: document.getElementById('setting-mirror-front'),
+        modalStyleBtns: document.querySelectorAll('.modal-style-btn'),
+        btnRequestGyro: document.getElementById('btn-request-gyro'),
+
+        // ギャラリーモーダル
+        galleryModal: document.getElementById('gallery-modal'),
+        btnCloseGallery: document.getElementById('btn-close-gallery'),
+        btnClearAllMedia: document.getElementById('btn-clear-all-media'),
+        galleryModalCount: document.getElementById('gallery-modal-count'),
+        galleryEmptyState: document.getElementById('gallery-empty-state'),
+        previewImage: document.getElementById('preview-image'),
+        previewVideo: document.getElementById('preview-video'),
+        galleryActionBar: document.getElementById('gallery-action-bar'),
+        previewMetaTitle: document.getElementById('preview-meta-title'),
+        previewMetaSub: document.getElementById('preview-meta-sub'),
+        btnDeleteCurrent: document.getElementById('btn-delete-current'),
+        btnShareCurrent: document.getElementById('btn-share-current'),
+        btnDownloadCurrent: document.getElementById('btn-download-current'),
+        galleryThumbnails: document.getElementById('gallery-thumbnails'),
+
+        // ヘルプモーダル
+        helpModal: document.getElementById('help-modal'),
+        btnCloseHelp: document.getElementById('btn-close-help'),
+        btnDoneHelp: document.getElementById('btn-done-help')
+      };
+
+      const displayCtx = dom.displayCanvas.getContext('2d', { alpha: false });
+      const captureCanvas = document.createElement('canvas');
+      const captureCtx = captureCanvas.getContext('2d', { alpha: false });
+
+      // ==========================================
+      // 3. トースト通知＆シャッターフラッシュ演出
+      // ==========================================
+      let toastTimeout = null;
+      function showToast(message) {
+        dom.toastText.textContent = message;
+        dom.toastBanner.classList.remove('opacity-0', '-translate-y-2');
+        dom.toastBanner.classList.add('opacity-100', 'translate-y-0');
+
+        if (toastTimeout) clearTimeout(toastTimeout);
+        toastTimeout = setTimeout(() => {
+          dom.toastBanner.classList.remove('opacity-100', 'translate-y-0');
+          dom.toastBanner.classList.add('opacity-0', '-translate-y-2');
+        }, 2000);
+      }
+
+      function triggerVisualShutterFlash() {
+        dom.shutterFlash.classList.remove('animate-shutter');
+        void dom.shutterFlash.offsetWidth;
+        dom.shutterFlash.classList.add('animate-shutter');
+      }
+
+      // ==========================================
+      // 4. カメラ初期化＆ストリーム管理（完全無音）
+      // ==========================================
+      async function initCamera() {
+        stopCurrentStream();
+        state.isDemoMode = false;
+        dom.demoBadge.classList.add('hidden');
+        dom.fallbackOverlay.classList.add('hidden');
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          showFallback('お使いのブラウザはカメラAPI（getUserMedia）に対応していないか、HTTPS環境ではありません。');
+          return;
+        }
+
+        try {
+          // 音声トラックを一切要求しない（audio: false）ことで完全無音動作を保証
+          const constraints = {
+            audio: false,
+            video: {
+              facingMode: { ideal: state.facingMode },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 }
+            }
+          };
+
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          state.stream = stream;
+          dom.video.srcObject = stream;
+          await dom.video.play();
+
+          const modeName = state.facingMode === 'user' ? 'フロントカメラ' : 'バックカメラ';
+          showToast(`SILENT READY // ${modeName}起動`);
+        } catch (err) {
+          console.warn('カメラ取得エラー:', err);
+          let reason = 'カメラの起動に失敗しました。ブラウザの権限設定をご確認ください。';
+          if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            reason = 'カメラへのアクセスが拒否されました。ブラウザの設定からカメラを許可して「再試行」を押すか、デモモードをお試しください。';
+          } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+            reason = '利用可能なカメラデバイスが見つかりませんでした。下の「デモモードで起動」から模擬映像で照準や無音撮影を体験できます。';
+          }
+          showFallback(reason);
+        }
+      }
+
+      function stopCurrentStream() {
+        if (state.stream) {
+          state.stream.getTracks().forEach(track => track.stop());
+          state.stream = null;
+        }
+      }
+
+      function showFallback(message) {
+        dom.fallbackReason.textContent = message;
+        dom.fallbackOverlay.classList.remove('hidden');
+      }
+
+      function startDemoMode() {
+        stopCurrentStream();
+        state.isDemoMode = true;
+        dom.fallbackOverlay.classList.add('hidden');
+        dom.demoBadge.classList.remove('hidden');
+        showToast('DEMO MODE // 模擬戦術映像を起動');
+      }
+
+      // ==========================================
+      // 5. キャンバスサイズ追従＆レスポンシブ調整
+      // ==========================================
+      function resizeDisplayCanvas() {
+        const rect = dom.displayCanvas.parentElement.getBoundingClientRect();
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        dom.displayCanvas.width = Math.max(1, Math.floor(rect.width * dpr));
+        dom.displayCanvas.height = Math.max(1, Math.floor(rect.height * dpr));
+      }
+      window.addEventListener('resize', resizeDisplayCanvas);
+      window.addEventListener('orientationchange', () => {
+        setTimeout(resizeDisplayCanvas, 150);
+      });
+
+      // ==========================================
+      // 6. 映像描画エンジン（実カメラ / デモ模擬映像 / ズーム / フィルター）
+      // ==========================================
+      function renderDemoSource(ctx, width, height, nowSec) {
+        const grad = ctx.createLinearGradient(0, 0, 0, height);
+        grad.addColorStop(0, '#0a141d');
+        grad.addColorStop(0.55, '#13222d');
+        grad.addColorStop(1, '#0b1318');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, width, height);
+
+        ctx.save();
+        ctx.strokeStyle = 'rgba(70, 130, 160, 0.22)';
+        ctx.lineWidth = 1;
+        const horizonY = height * 0.52;
+        const driftX = Math.sin(nowSec * 0.35) * 60;
+        const driftY = (nowSec * 35) % 40;
+
+        for (let i = 0; i < 12; i++) {
+          const y = horizonY + Math.pow(i / 11, 1.7) * (height - horizonY) + driftY * (i / 11);
+          if (y <= height) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(width, y);
+            ctx.stroke();
+          }
+        }
+        for (let i = -8; i <= 8; i++) {
+          ctx.beginPath();
+          ctx.moveTo(width * 0.5 + i * 25 + driftX * 0.2, horizonY);
+          ctx.lineTo(width * 0.5 + i * 160 + driftX, height);
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = 'rgba(15, 28, 36, 0.85)';
+        const buildings = [
+          { x: 0.15, w: 0.09, h: 0.14 },
+          { x: 0.27, w: 0.06, h: 0.09 },
+          { x: 0.65, w: 0.11, h: 0.16 },
+          { x: 0.79, w: 0.08, h: 0.11 }
+        ];
+        buildings.forEach(b => {
+          const bx = ((b.x * width + driftX * 0.3 + width) % width);
+          const bh = b.h * height;
+          ctx.fillRect(bx, horizonY - bh, b.w * width, bh);
+        });
+
+        const targetX = width * (0.5 + Math.sin(nowSec * 0.6) * 0.24);
+        const targetY = height * (0.66 + Math.cos(nowSec * 0.45) * 0.05);
+        ctx.fillStyle = 'rgba(220, 245, 255, 0.85)';
+        ctx.beginPath();
+        ctx.ellipse(targetX, targetY, 14, 6, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.28)';
+        ctx.font = `600 ${Math.max(11, Math.floor(width * 0.015))}px "JetBrains Mono", monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillText('SIMULATED OPTICAL FEED // 模擬光学映像モード', width * 0.5, height * 0.82);
+        ctx.restore();
+      }
+
+      function drawVideoFrame(ctx, targetW, targetH, applyNvgFilter, nowSec) {
+        ctx.save();
+        ctx.fillStyle = '#050706';
+        ctx.fillRect(0, 0, targetW, targetH);
+
+        const isFrontMirror = !state.isDemoMode && state.facingMode === 'user' && state.mirrorFrontCamera;
+        if (isFrontMirror) {
+          ctx.translate(targetW, 0);
+          ctx.scale(-1, 1);
+        }
+
+        if (state.isDemoMode || !dom.video.videoWidth || !dom.video.videoHeight) {
+          ctx.save();
+          ctx.translate(targetW / 2, targetH / 2);
+          ctx.scale(state.zoom, state.zoom);
+          ctx.translate(-targetW / 2, -targetH / 2);
+          renderDemoSource(ctx, targetW, targetH, nowSec);
+          ctx.restore();
+        } else {
+          const vw = dom.video.videoWidth;
+          const vh = dom.video.videoHeight;
+          const targetRatio = targetW / targetH;
+          const videoRatio = vw / vh;
+
+          let cropW, cropH;
+          if (videoRatio > targetRatio) {
+            cropH = vh;
+            cropW = vh * targetRatio;
+          } else {
+            cropW = vw;
+            cropH = vw / targetRatio;
+          }
+
+          const zoomedW = cropW / state.zoom;
+          const zoomedH = cropH / state.zoom;
+          const sx = (vw - zoomedW) / 2;
+          const sy = (vh - zoomedH) / 2;
+
+          ctx.drawImage(dom.video, sx, sy, zoomedW, zoomedH, 0, 0, targetW, targetH);
+        }
+
+        ctx.restore();
+
+        // ナイトビジョン風（NVG）グリーンフィルター＆走査線効果
+        if (applyNvgFilter) {
+          ctx.save();
+          ctx.fillStyle = 'rgba(0, 255, 102, 0.24)';
+          ctx.globalCompositeOperation = 'multiply';
+          ctx.fillRect(0, 0, targetW, targetH);
+
+          ctx.globalCompositeOperation = 'screen';
+          ctx.fillStyle = 'rgba(0, 180, 70, 0.22)';
+          ctx.fillRect(0, 0, targetW, targetH);
+          ctx.globalCompositeOperation = 'source-over';
+
+          ctx.fillStyle = 'rgba(0, 15, 4, 0.22)';
+          const step = Math.max(3, Math.floor(targetH / 180));
+          for (let y = 0; y < targetH; y += step * 2) {
+            ctx.fillRect(0, y, targetW, step);
+          }
+
+          const radGrad = ctx.createRadialGradient(
+            targetW * 0.5, targetH * 0.5, targetW * 0.22,
+            targetW * 0.5, targetH * 0.5, Math.max(targetW, targetH) * 0.72
+          );
+          radGrad.addColorStop(0, 'rgba(0,0,0,0)');
+          radGrad.addColorStop(1, 'rgba(0, 10, 2, 0.78)');
+          ctx.fillStyle = radGrad;
+          ctx.fillRect(0, 0, targetW, targetH);
+          ctx.restore();
+        }
+      }
+
+      // ==========================================
+      // 7. 軍用照準（ミリタリーHUD）静的精密描画エンジン
+      //    ※中央の回転アニメーション要素は完全に排除し、クリアな視界を確保
+      // ==========================================
+      function drawMilitaryHUD(ctx, w, h, nowSec) {
+        const hudGreen = '#00ff66';
+        const hudDim = 'rgba(0, 255, 102, 0.36)';
+        const hudGridColor = 'rgba(0, 255, 102, 0.16)';
+        const cx = w * 0.5;
+        const cy = h * 0.5;
+        const minDim = Math.min(w, h);
+        const scale = Math.max(0.65, minDim / 650);
+
+        ctx.save();
+        ctx.strokeStyle = hudGreen;
+        ctx.fillStyle = hudGreen;
+        ctx.shadowColor = 'rgba(0, 255, 102, 0.45)';
+        ctx.shadowBlur = 4 * scale;
+        ctx.lineCap = 'square';
+
+        // 傾き・方位データ（センサー未使用時は水平固定で余計な揺れを防止）
+        const activeRoll = state.hasGyro ? state.roll : 0;
+        const activePitch = state.hasGyro ? state.pitch : 0;
+        const activeHeading = state.hasGyro ? state.heading : 342;
+
+        // ------------------------------------------
+        // 0. タクティカルグリッド線（設定ON時）
+        // ------------------------------------------
+        if (state.showGrid) {
+          ctx.save();
+          ctx.shadowBlur = 0;
+          ctx.strokeStyle = hudGridColor;
+          ctx.lineWidth = 1 * scale;
+          for (let i = 1; i <= 2; i++) {
+            const gx = (w / 3) * i;
+            const gy = (h / 3) * i;
+            ctx.beginPath();
+            ctx.moveTo(gx, 0);
+            ctx.lineTo(gx, h);
+            ctx.moveTo(0, gy);
+            ctx.lineTo(w, gy);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+
+        // ------------------------------------------
+        // A. スナイパースコープ専用：精密測距グリッド＆スコープ外周
+        // ------------------------------------------
+        if (state.hudStyle === 'sniper') {
+          const scopeRadius = minDim * 0.41;
+          ctx.save();
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = 'rgba(2, 6, 3, 0.84)';
+          ctx.beginPath();
+          ctx.rect(0, 0, w, h);
+          ctx.arc(cx, cy, scopeRadius, 0, Math.PI * 2, true);
+          ctx.fill();
+
+          // 静的なスコープ外周リング
+          ctx.strokeStyle = hudGreen;
+          ctx.lineWidth = 2.2 * scale;
+          ctx.beginPath();
+          ctx.arc(cx, cy, scopeRadius, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // 角度目盛り（360度静的配置）
+          ctx.lineWidth = 1.2 * scale;
+          for (let deg = 0; deg < 360; deg += 15) {
+            const rad = (deg * Math.PI) / 180;
+            const innerR = deg % 45 === 0 ? scopeRadius - 14 * scale : scopeRadius - 7 * scale;
+            ctx.beginPath();
+            ctx.moveTo(cx + Math.cos(rad) * innerR, cy + Math.sin(rad) * innerR);
+            ctx.lineTo(cx + Math.cos(rad) * scopeRadius, cy + Math.sin(rad) * scopeRadius);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+
+        // ------------------------------------------
+        // B. 四隅のターゲットブラケット（全スタイル共通）
+        // ------------------------------------------
+        const marginX = Math.max(18 * scale, w * 0.05);
+        const marginY = Math.max(66 * scale, h * 0.09);
+        const bracketLen = 28 * scale;
+        ctx.lineWidth = 2.2 * scale;
+
+        // 左上
+        ctx.beginPath();
+        ctx.moveTo(marginX, marginY + bracketLen);
+        ctx.lineTo(marginX, marginY);
+        ctx.lineTo(marginX + bracketLen, marginY);
+        ctx.stroke();
+
+        // 右上
+        ctx.beginPath();
+        ctx.moveTo(w - marginX - bracketLen, marginY);
+        ctx.lineTo(w - marginX, marginY);
+        ctx.lineTo(w - marginX, marginY + bracketLen);
+        ctx.stroke();
+
+        // 左下
+        ctx.beginPath();
+        ctx.moveTo(marginX, h - marginY - bracketLen);
+        ctx.lineTo(marginX, h - marginY);
+        ctx.lineTo(marginX + bracketLen, h - marginY);
+        ctx.stroke();
+
+        // 右下
+        ctx.beginPath();
+        ctx.moveTo(w - marginX - bracketLen, h - marginY);
+        ctx.lineTo(w - marginX, h - marginY);
+        ctx.lineTo(w - marginX, h - marginY - bracketLen);
+        ctx.stroke();
+
+        // ------------------------------------------
+        // C. 上部方位コンパススケール（テレメトリ表示ON時）
+        // ------------------------------------------
+        if (state.showTelemetry) {
+          const tapeW = Math.min(w * 0.54, 300 * scale);
+          const tapeY = marginY + 14 * scale;
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(cx - tapeW / 2, tapeY - 16 * scale, tapeW, 34 * scale);
+          ctx.clip();
+
+          ctx.strokeStyle = hudDim;
+          ctx.lineWidth = 1.2 * scale;
+          ctx.font = `700 ${Math.round(10 * scale)}px "JetBrains Mono", monospace`;
+          ctx.textAlign = 'center';
+
+          const pxPerDeg = 3.2 * scale;
+          const startDeg = Math.floor(activeHeading - (tapeW / 2) / pxPerDeg) - 5;
+          const endDeg = Math.ceil(activeHeading + (tapeW / 2) / pxPerDeg) + 5;
+          const cardinals = { 0: 'N', 45: 'NE', 90: 'E', 135: 'SE', 180: 'S', 225: 'SW', 270: 'W', 315: 'NW' };
+
+          for (let d = startDeg; d <= endDeg; d++) {
+            const normDeg = ((d % 360) + 360) % 360;
+            const x = cx + (d - activeHeading) * pxPerDeg;
+            if (normDeg % 15 === 0) {
+              ctx.strokeStyle = hudGreen;
+              ctx.beginPath();
+              ctx.moveTo(x, tapeY);
+              ctx.lineTo(x, tapeY + 8 * scale);
+              ctx.stroke();
+
+              const label = cardinals[normDeg] || String(normDeg).padStart(3, '0');
+              ctx.fillText(label, x, tapeY - 4 * scale);
+            } else if (normDeg % 5 === 0) {
+              ctx.strokeStyle = hudDim;
+              ctx.beginPath();
+              ctx.moveTo(x, tapeY + 3 * scale);
+              ctx.lineTo(x, tapeY + 8 * scale);
+              ctx.stroke();
+            }
+          }
+          ctx.restore();
+
+          // 中央方位ポインター三角
+          ctx.beginPath();
+          ctx.moveTo(cx, tapeY + 10 * scale);
+          ctx.lineTo(cx - 5 * scale, tapeY + 17 * scale);
+          ctx.lineTo(cx + 5 * scale, tapeY + 17 * scale);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        // ------------------------------------------
+        // D. 水平インジケーター（傾きセンサー連動・静的水平ウィング）
+        // ------------------------------------------
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate((-activeRoll * Math.PI) / 180);
+
+        const ladderHalfW = (state.hudStyle === 'sniper' ? 98 : 118) * scale;
+        const ladderGap = 42 * scale;
+        ctx.strokeStyle = hudDim;
+        ctx.lineWidth = 1.4 * scale;
+
+        // 水平基準ウィング（左右）
+        ctx.beginPath();
+        ctx.moveTo(-ladderHalfW, 0);
+        ctx.lineTo(-ladderGap, 0);
+        ctx.lineTo(-ladderGap, 7 * scale);
+        ctx.moveTo(ladderHalfW, 0);
+        ctx.lineTo(ladderGap, 0);
+        ctx.lineTo(ladderGap, 7 * scale);
+        ctx.stroke();
+
+        // ピッチラダー上下目盛り（±10度）
+        const pitchOffset = activePitch * 2.5 * scale;
+        [-10, 10].forEach(deg => {
+          const py = pitchOffset - deg * 2.5 * scale;
+          const barW = 24 * scale;
+          ctx.beginPath();
+          ctx.moveTo(-ladderGap - barW, py);
+          ctx.lineTo(-ladderGap, py);
+          ctx.moveTo(ladderGap, py);
+          ctx.lineTo(ladderGap + barW, py);
+          ctx.stroke();
+        });
+        ctx.restore();
+
+        // ------------------------------------------
+        // E. 中央の静的ミリタリーレティクル（精密十字線＋ミルドット測距目盛り）
+        //    ※回転パーツなし・被写体の視認性を妨げないクリア設計
+        // ------------------------------------------
+        ctx.save();
+        ctx.translate(cx, cy);
+
+        const crossArm = (state.hudStyle === 'sniper' ? minDim * 0.34 : 88 * scale);
+        const centerClear = 12 * scale; // 中央付近はクリアに空けて被写体を見やすくする
+        ctx.strokeStyle = hudGreen;
+        ctx.lineWidth = 1.6 * scale;
+
+        // 縦軸・横軸ライン
+        ctx.beginPath();
+        ctx.moveTo(-crossArm, 0);
+        ctx.lineTo(-centerClear, 0);
+        ctx.moveTo(centerClear, 0);
+        ctx.lineTo(crossArm, 0);
+        ctx.moveTo(0, -crossArm);
+        ctx.lineTo(0, -centerClear);
+        ctx.moveTo(0, centerClear);
+        ctx.lineTo(0, crossArm);
+        ctx.stroke();
+
+        // ミルスペック・測距目盛り
+        const step = 16 * scale;
+        const maxTicks = state.hudStyle === 'sniper' ? 6 : 4;
+        for (let i = 1; i <= maxTicks; i++) {
+          const pos = centerClear + i * step;
+          if (pos < crossArm) {
+            ctx.beginPath();
+            // 横目盛り
+            ctx.moveTo(pos, -3.5 * scale);
+            ctx.lineTo(pos, 3.5 * scale);
+            ctx.moveTo(-pos, -3.5 * scale);
+            ctx.lineTo(-pos, 3.5 * scale);
+            // 縦（弾道ドロップ）目盛り
+            const dropW = (state.hudStyle === 'sniper' ? Math.max(3, (7 - i) * 3.2) : (5 - i) * 3.2) * scale;
+            ctx.moveTo(-dropW, pos);
+            ctx.lineTo(dropW, pos);
+            ctx.moveTo(-3.5 * scale, -pos);
+            ctx.lineTo(3.5 * scale, -pos);
+            ctx.stroke();
+          }
+        }
+
+        // 中央の極小精密ドット（静止）
+        ctx.fillStyle = hudGreen;
+        ctx.beginPath();
+        ctx.arc(0, 0, 2.0 * scale, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // ------------------------------------------
+        // F. スタジアメトリック・レンジファインダー（右下測距曲線）
+        // ------------------------------------------
+        if (state.hudStyle !== 'sniper') {
+          const rfX = cx + 62 * scale;
+          const rfY = cy + 68 * scale;
+          const rfW = 54 * scale;
+          const rfH = 32 * scale;
+
+          ctx.save();
+          ctx.strokeStyle = hudDim;
+          ctx.lineWidth = 1.2 * scale;
+          ctx.beginPath();
+          ctx.moveTo(rfX, rfY);
+          ctx.lineTo(rfX + rfW, rfY);
+          ctx.moveTo(rfX, rfY - rfH);
+          ctx.quadraticCurveTo(rfX + rfW * 0.45, rfY - rfH * 0.25, rfX + rfW, rfY - 4 * scale);
+          ctx.stroke();
+
+          ctx.font = `600 ${Math.round(8 * scale)}px "JetBrains Mono", monospace`;
+          ctx.fillStyle = hudDim;
+          ctx.fillText('200  400  600m', rfX + 2, rfY + 10 * scale);
+          ctx.restore();
+        }
+
+        // ------------------------------------------
+        // G. 周辺テレメトリー情報（日時タイムスタンプ・ズーム倍率・擬似方位・推定距離）
+        // ------------------------------------------
+        if (state.showTelemetry) {
+          const now = new Date();
+          const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+          const timeStr = [
+            String(now.getHours()).padStart(2, '0'),
+            String(now.getMinutes()).padStart(2, '0'),
+            String(now.getSeconds()).padStart(2, '0')
+          ].join(':');
+
+          const estRange = Math.max(15, Math.round(180 / state.zoom));
+          const fontSize = Math.max(10, Math.round(11 * scale));
+          ctx.font = `700 ${fontSize}px "JetBrains Mono", monospace`;
+          ctx.fillStyle = hudGreen;
+
+          // 左上テレメトリー
+          ctx.textAlign = 'left';
+          const leftTextX = marginX + 10 * scale;
+          const topTextY = marginY + 18 * scale;
+          ctx.fillText(`SYS // ${state.hudStyle.toUpperCase()}`, leftTextX, topTextY);
+          ctx.fillText(`ZM  // ${state.zoom.toFixed(1)}X`, leftTextX, topTextY + fontSize * 1.35);
+          ctx.fillText(`RNG // ~${estRange}M`, leftTextX, topTextY + fontSize * 2.7);
+
+          // 右上テレメトリー
+          ctx.textAlign = 'right';
+          const rightTextX = w - marginX - 10 * scale;
+          ctx.fillText(`${dateStr} ${timeStr}`, rightTextX, topTextY);
+          ctx.fillText(`HDG ${String(Math.round(activeHeading)).padStart(3, '0')}° // NO-AUDIO`, rightTextX, topTextY + fontSize * 1.35);
+          ctx.fillText(`ROL ${activeRoll >= 0 ? '+' : ''}${activeRoll.toFixed(1)}°`, rightTextX, topTextY + fontSize * 2.7);
+        }
+
+        // ------------------------------------------
+        // H. 画面タップ時のターゲットロックオン演出（静止ロックオン枠＋座標＋ピント風エフェクト）
+        // ------------------------------------------
+        if (state.targetLock) {
+          const elapsed = nowSec - state.targetLock.createdAt;
+          if (elapsed < 3.5) {
+            const tx = state.targetLock.xRatio * w;
+            const ty = state.targetLock.yRatio * h;
+            const alpha = Math.max(0, 1 - elapsed / 3.5);
+            // 最初の0.22秒だけスッとピントが合うように収束し、その後は完全に静止
+            const snapOffset = elapsed < 0.22 ? (1 - elapsed / 0.22) * 18 : 0;
+            const boxSize = (24 + snapOffset) * scale;
+
+            ctx.save();
+            ctx.strokeStyle = `rgba(0, 255, 102, ${alpha})`;
+            ctx.fillStyle = `rgba(0, 255, 102, ${alpha})`;
+            ctx.lineWidth = 2 * scale;
+
+            const c = 8 * scale;
+            ctx.beginPath();
+            ctx.moveTo(tx - boxSize, ty - boxSize + c);
+            ctx.lineTo(tx - boxSize, ty - boxSize);
+            ctx.lineTo(tx - boxSize + c, ty - boxSize);
+
+            ctx.moveTo(tx + boxSize - c, ty - boxSize);
+            ctx.lineTo(tx + boxSize, ty - boxSize);
+            ctx.lineTo(tx + boxSize, ty - boxSize + c);
+
+            ctx.moveTo(tx - boxSize, ty + boxSize - c);
+            ctx.lineTo(tx - boxSize, ty + boxSize);
+            ctx.lineTo(tx - boxSize + c, ty + boxSize);
+
+            ctx.moveTo(tx + boxSize - c, ty + boxSize);
+            ctx.lineTo(tx + boxSize, ty + boxSize);
+            ctx.lineTo(tx + boxSize, ty + boxSize - c);
+            ctx.stroke();
+
+            // 中央極小ピントクロス
+            ctx.beginPath();
+            ctx.moveTo(tx - 4 * scale, ty);
+            ctx.lineTo(tx + 4 * scale, ty);
+            ctx.moveTo(tx, ty - 4 * scale);
+            ctx.lineTo(tx, ty + 4 * scale);
+            ctx.stroke();
+
+            ctx.font = `700 ${Math.round(9 * scale)}px "JetBrains Mono", monospace`;
+            ctx.textAlign = 'left';
+            ctx.fillText(`LOCK [${Math.round(state.targetLock.xRatio * 100)},${Math.round(state.targetLock.yRatio * 100)}]`, tx - boxSize, ty - boxSize - 5 * scale);
+            ctx.restore();
+          } else {
+            state.targetLock = null;
+          }
+        }
+
+        ctx.restore();
+      }
+
+      // ==========================================
+      // 8. メイン描画ループ（60fps）
+      // ==========================================
+      function renderLoop(nowMs) {
+        const nowSec = nowMs / 1000;
+
+        state.frameCounter++;
+        if (nowMs - state.lastFrameTime >= 500) {
+          state.fps = Math.min(60, Math.round((state.frameCounter * 1000) / (nowMs - state.lastFrameTime)));
+          state.frameCounter = 0;
+          state.lastFrameTime = nowMs;
+        }
+
+        const w = dom.displayCanvas.width;
+        const h = dom.displayCanvas.height;
+
+        if (w > 0 && h > 0) {
+          const applyNvg = state.hudEnabled && state.hudStyle === 'nvg';
+          drawVideoFrame(displayCtx, w, h, applyNvg, nowSec);
+
+          if (state.hudEnabled) {
+            drawMilitaryHUD(displayCtx, w, h, nowSec);
+          }
+        }
+
+        if (state.isRecording && captureCanvas.width > 0 && captureCanvas.height > 0) {
+          const burnNvg = state.burnHudInMedia && state.hudEnabled && state.hudStyle === 'nvg';
+          drawVideoFrame(captureCtx, captureCanvas.width, captureCanvas.height, burnNvg, nowSec);
+          if (state.burnHudInMedia && state.hudEnabled) {
+            drawMilitaryHUD(captureCtx, captureCanvas.width, captureCanvas.height, nowSec);
+          }
+        }
+
+        requestAnimationFrame(renderLoop);
+      }
+
+      // ==========================================
+      // 9. 無音写真撮影（JPEGキャプチャ）
+      // ==========================================
+      function captureSilentPhoto() {
+        try {
+          triggerVisualShutterFlash();
+
+          const aspect = dom.displayCanvas.width / Math.max(1, dom.displayCanvas.height);
+          const outH = 1080;
+          const outW = Math.round(outH * aspect);
+          captureCanvas.width = outW;
+          captureCanvas.height = outH;
+
+          const nowSec = performance.now() / 1000;
+          const burnNvg = state.burnHudInMedia && state.hudEnabled && state.hudStyle === 'nvg';
+          drawVideoFrame(captureCtx, outW, outH, burnNvg, nowSec);
+
+          if (state.burnHudInMedia && state.hudEnabled) {
+            drawMilitaryHUD(captureCtx, outW, outH, nowSec);
+          }
+
+          captureCanvas.toBlob((blob) => {
+            if (!blob) {
+              showToast('ERROR // 画像生成に失敗しました');
+              return;
+            }
+            const url = URL.createObjectURL(blob);
+            const filename = generateTimestampFilename('SILENT_IMG', 'jpg');
+
+            addMediaItem({
+              id: Date.now() + Math.random(),
+              type: 'photo',
+              blob,
+              mimeType: 'image/jpeg',
+              url,
+              thumbUrl: url,
+              filename,
+              timestamp: new Date().toLocaleTimeString('ja-JP'),
+              burnHud: state.burnHudInMedia && state.hudEnabled,
+              resolution: `${outW}x${outH}`
+            });
+
+            const burnText = (state.burnHudInMedia && state.hudEnabled) ? '照準合成済' : '通常映像';
+            showToast(`CAPTURED // 無音撮影完了 (${burnText})`);
+          }, 'image/jpeg', 0.92);
+        } catch (err) {
+          console.error('写真撮影エラー:', err);
+          showToast('ERROR // 撮影中にエラーが発生しました');
+        }
+      }
+
+      // ==========================================
+      // 10. 無音動画録画（MediaRecorder / 音声トラックなし）
+      // ==========================================
+      function toggleSilentVideoRecording() {
+        if (state.isRecording) {
+          stopSilentVideoRecording();
+        } else {
+          startSilentVideoRecording();
+        }
+      }
+
+      function startSilentVideoRecording() {
+        try {
+          if (typeof MediaRecorder === 'undefined') {
+            showToast('ERROR // このブラウザは動画録画に非対応です');
+            return;
+          }
+
+          const aspect = dom.displayCanvas.width / Math.max(1, dom.displayCanvas.height);
+          const outH = 720;
+          const outW = Math.round(outH * aspect);
+          captureCanvas.width = outW % 2 === 0 ? outW : outW + 1;
+          captureCanvas.height = outH % 2 === 0 ? outH : outH + 1;
+
+          const nowSec = performance.now() / 1000;
+          const burnNvg = state.burnHudInMedia && state.hudEnabled && state.hudStyle === 'nvg';
+          drawVideoFrame(captureCtx, captureCanvas.width, captureCanvas.height, burnNvg, nowSec);
+          if (state.burnHudInMedia && state.hudEnabled) {
+            drawMilitaryHUD(captureCtx, captureCanvas.width, captureCanvas.height, nowSec);
+          }
+
+          // Canvasから30fpsの映像ストリームのみを取得（音声トラックはゼロ＝完全無音）
+          const canvasStream = captureCanvas.captureStream(30);
+
+          // iOS Safari (video/mp4) / Android Chrome・PC (video/webm) 両対応MIME自動判定
+          const mimeCandidates = [
+            'video/mp4;codecs=avc1',
+            'video/mp4',
+            'video/webm;codecs=vp9',
+            'video/webm;codecs=vp8',
+            'video/webm'
+          ];
+          let selectedMime = '';
+          for (const mime of mimeCandidates) {
+            if (MediaRecorder.isTypeSupported(mime)) {
+              selectedMime = mime;
+              break;
+            }
+          }
+
+          const options = selectedMime ? { mimeType: selectedMime } : {};
+          const recorder = new MediaRecorder(canvasStream, options);
+
+          state.recordedChunks = [];
+          state.mediaRecorder = recorder;
+          state.isRecording = true;
+          state.recStartTime = Date.now();
+
+          recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) {
+              state.recordedChunks.push(e.data);
+            }
+          };
+
+          recorder.onstop = () => {
+            const finalMime = recorder.mimeType || selectedMime || 'video/webm';
+            const ext = finalMime.includes('mp4') ? 'mp4' : 'webm';
+            const blob = new Blob(state.recordedChunks, { type: finalMime });
+            const videoUrl = URL.createObjectURL(blob);
+            const filename = generateTimestampFilename('SILENT_MOV', ext);
+            const thumbUrl = captureCanvas.toDataURL('image/jpeg', 0.75);
+
+            addMediaItem({
+              id: Date.now() + Math.random(),
+              type: 'video',
+              blob,
+              mimeType: finalMime,
+              url: videoUrl,
+              thumbUrl,
+              filename,
+              timestamp: new Date().toLocaleTimeString('ja-JP'),
+              burnHud: state.burnHudInMedia && state.hudEnabled,
+              resolution: `${captureCanvas.width}x${captureCanvas.height}`
+            });
+
+            showToast('SAVED // 無音動画の録画を保存しました');
+          };
+
+          recorder.start(250);
+          updateRecordingUI(true);
+          showToast('REC START // 完全無音録画を開始');
+        } catch (err) {
+          console.error('録画開始エラー:', err);
+          state.isRecording = false;
+          updateRecordingUI(false);
+          showToast('ERROR // 録画を開始できませんでした');
+        }
+      }
+
+      function stopSilentVideoRecording() {
+        if (state.mediaRecorder && state.isRecording) {
+          state.isRecording = false;
+          state.mediaRecorder.stop();
+          updateRecordingUI(false);
+        }
+      }
+
+      function updateRecordingUI(recording) {
+        if (recording) {
+          dom.recIndicator.classList.remove('hidden');
+          dom.recBorderFrame.classList.remove('hidden');
+          dom.recTimer.textContent = '00:00';
+          dom.shutterInner.classList.remove('rounded-full', 'bg-white');
+          dom.shutterInner.classList.add('rounded-xl', 'bg-red-500', 'scale-75');
+          dom.shutterInnerRing.classList.add('hidden');
+
+          state.recTimerInterval = setInterval(() => {
+            const elapsedSec = Math.floor((Date.now() - state.recStartTime) / 1000);
+            const mm = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
+            const ss = String(elapsedSec % 60).padStart(2, '0');
+            dom.recTimer.textContent = `${mm}:${ss}`;
+          }, 500);
+        } else {
+          dom.recIndicator.classList.add('hidden');
+          dom.recBorderFrame.classList.add('hidden');
+          if (state.recTimerInterval) {
+            clearInterval(state.recTimerInterval);
+            state.recTimerInterval = null;
+          }
+          syncShutterButtonAppearance();
+        }
+      }
+
+      function generateTimestampFilename(prefix, ext) {
+        const d = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const datePart = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+        const timePart = `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+        return `${prefix}_${datePart}_${timePart}.${ext}`;
+      }
+
+      // ==========================================
+      // 11. ギャラリーデータ管理＆Web Share API共有
+      // ==========================================
+      function addMediaItem(item) {
+        state.mediaItems.unshift(item);
+        state.selectedMediaIndex = 0;
+        updateBottomThumbnail();
+        renderGalleryModal();
+      }
+
+      function updateBottomThumbnail() {
+        const count = state.mediaItems.length;
+        if (count > 0) {
+          const latest = state.mediaItems[0];
+          dom.latestThumbImg.src = latest.thumbUrl;
+          dom.latestThumbImg.classList.remove('hidden');
+          dom.emptyThumbPlaceholder.classList.add('hidden');
+          dom.galleryCountBadge.textContent = count;
+          dom.galleryCountBadge.classList.remove('hidden');
+        } else {
+          dom.latestThumbImg.classList.add('hidden');
+          dom.emptyThumbPlaceholder.classList.remove('hidden');
+          dom.galleryCountBadge.classList.add('hidden');
+        }
+      }
+
+      function renderGalleryModal() {
+        const count = state.mediaItems.length;
+        dom.galleryModalCount.textContent = `${count}件`;
+
+        if (count === 0) {
+          dom.galleryEmptyState.classList.remove('hidden');
+          dom.previewImage.classList.add('hidden');
+          dom.previewVideo.classList.add('hidden');
+          dom.previewVideo.pause();
+          dom.galleryActionBar.classList.add('hidden');
+          dom.btnClearAllMedia.classList.add('hidden');
+          dom.galleryThumbnails.innerHTML = '';
+          return;
+        }
+
+        dom.galleryEmptyState.classList.add('hidden');
+        dom.galleryActionBar.classList.remove('hidden');
+        dom.btnClearAllMedia.classList.remove('hidden');
+
+        if (state.selectedMediaIndex < 0 || state.selectedMediaIndex >= count) {
+          state.selectedMediaIndex = 0;
+        }
+
+        const current = state.mediaItems[state.selectedMediaIndex];
+        if (current.type === 'photo') {
+          dom.previewVideo.pause();
+          dom.previewVideo.classList.add('hidden');
+          dom.previewImage.src = current.url;
+          dom.previewImage.classList.remove('hidden');
+        } else {
+          dom.previewImage.classList.add('hidden');
+          dom.previewVideo.src = current.url;
+          dom.previewVideo.classList.remove('hidden');
+        }
+
+        dom.previewMetaTitle.textContent = current.filename;
+        dom.previewMetaSub.textContent = `照準焼き込み: ${current.burnHud ? 'ON' : 'OFF'} • ${current.resolution} • ${current.timestamp}`;
+        dom.btnDownloadCurrent.href = current.url;
+        dom.btnDownloadCurrent.download = current.filename;
+
+        // サムネイルリスト構築
+        dom.galleryThumbnails.innerHTML = '';
+        state.mediaItems.forEach((item, idx) => {
+          const btn = document.createElement('button');
+          const isSelected = idx === state.selectedMediaIndex;
+          btn.className = `relative shrink-0 w-16 h-16 rounded-xl overflow-hidden border-2 transition ${
+            isSelected ? 'border-[#00ff66] scale-105 shadow-[0_0_12px_rgba(0,255,102,0.4)]' : 'border-neutral-800 opacity-70 hover:opacity-100'
+          }`;
+          btn.innerHTML = `
+            <img src="${item.thumbUrl}" alt="${item.filename}" class="w-full h-full object-cover" />
+            ${item.type === 'video' ? '<span class="absolute top-1 left-1 px-1 rounded bg-red-600 text-[9px] font-bold text-white">MOV</span>' : ''}
+            ${item.burnHud ? '<span class="absolute bottom-1 right-1 w-2 h-2 rounded-full bg-[#00ff66]"></span>' : ''}
+          `;
+          btn.addEventListener('click', () => {
+            state.selectedMediaIndex = idx;
+            renderGalleryModal();
+          });
+          dom.galleryThumbnails.appendChild(btn);
+        });
+      }
+
+      async function shareCurrentMedia() {
+        if (state.selectedMediaIndex < 0 || state.selectedMediaIndex >= state.mediaItems.length) return;
+        const current = state.mediaItems[state.selectedMediaIndex];
+
+        try {
+          if (navigator.share && current.blob) {
+            const file = new File([current.blob], current.filename, { type: current.mimeType });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+              await navigator.share({
+                files: [file],
+                title: current.filename
+              });
+              showToast('SHARED // 共有シートを起動しました');
+              return;
+            }
+          }
+          // Web Share API非対応環境（PC等）ではダウンロードへフォールバック
+          dom.btnDownloadCurrent.click();
+          showToast('DOWNLOAD // 端末へのダウンロードを開始');
+        } catch (err) {
+          if (err.name !== 'AbortError') {
+            console.warn('共有エラー:', err);
+            dom.btnDownloadCurrent.click();
+          }
+        }
+      }
+
+      // ==========================================
+      // 12. UI状態同期ヘルパー
+      // ==========================================
+      function syncHudControlsUI() {
+        if (state.hudEnabled) {
+          dom.hudToggleLabel.textContent = '照準: ON';
+          dom.btnToggleHud.className = 'min-h-[38px] shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#00ff66]/20 border border-[#00ff66] text-[#00ff66] text-xs font-bold transition active:scale-95';
+        } else {
+          dom.hudToggleLabel.textContent = '照準: OFF';
+          dom.btnToggleHud.className = 'min-h-[38px] shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-800/90 border border-neutral-700 text-neutral-400 text-xs font-bold transition active:scale-95';
+        }
+        dom.settingHudEnabled.checked = state.hudEnabled;
+
+        dom.hudStyleBtns.forEach(btn => {
+          const isMatch = btn.dataset.style === state.hudStyle;
+          if (isMatch) {
+            btn.className = 'hud-style-btn min-h-[38px] px-2.5 py-1.5 rounded-xl text-[11px] font-semibold bg-[#00ff66] text-black transition whitespace-nowrap';
+          } else {
+            btn.className = 'hud-style-btn min-h-[38px] px-2.5 py-1.5 rounded-xl text-[11px] font-semibold text-neutral-300 hover:bg-white/10 transition whitespace-nowrap';
+          }
+        });
+
+        dom.modalStyleBtns.forEach(btn => {
+          const isMatch = btn.dataset.modalStyle === state.hudStyle;
+          if (isMatch) {
+            btn.className = 'modal-style-btn min-h-[54px] p-2 rounded-xl border border-[#00ff66] bg-[#00ff66]/15 text-[#00ff66] text-xs font-bold text-center';
+          } else {
+            btn.className = 'modal-style-btn min-h-[54px] p-2 rounded-xl border border-neutral-800 bg-neutral-900 text-neutral-300 text-xs font-bold text-center';
+          }
+        });
+      }
+
+      function syncBurnSettingUI() {
+        dom.settingBurnHud.checked = state.burnHudInMedia;
+        if (state.burnHudInMedia) {
+          dom.btnQuickBurn.className = 'w-14 h-14 rounded-2xl bg-neutral-900/90 border border-[#00ff66]/60 flex flex-col items-center justify-center gap-0.5 text-[#00ff66] active:scale-95 transition';
+          dom.burnStatusBadge.textContent = 'ON';
+          dom.burnStatusBadge.className = 'text-[9px] font-mono font-bold px-1.5 rounded bg-[#00ff66] text-black';
+        } else {
+          dom.btnQuickBurn.className = 'w-14 h-14 rounded-2xl bg-neutral-900/90 border border-neutral-700 flex flex-col items-center justify-center gap-0.5 text-neutral-400 active:scale-95 transition';
+          dom.burnStatusBadge.textContent = 'OFF';
+          dom.burnStatusBadge.className = 'text-[9px] font-mono font-bold px-1.5 rounded bg-neutral-700 text-neutral-300';
+        }
+      }
+
+      function syncShutterButtonAppearance() {
+        if (state.captureMode === 'photo') {
+          dom.modePhotoBtn.className = 'min-h-[34px] px-4 py-1 rounded-full text-xs font-bold bg-white text-black transition';
+          dom.modeVideoBtn.className = 'min-h-[34px] px-4 py-1 rounded-full text-xs font-bold text-neutral-400 hover:text-white transition';
+          dom.shutterInner.className = 'w-full h-full rounded-full bg-white transition-all duration-200 flex items-center justify-center';
+          dom.shutterInnerRing.classList.remove('hidden');
+        } else {
+          dom.modePhotoBtn.className = 'min-h-[34px] px-4 py-1 rounded-full text-xs font-bold text-neutral-400 hover:text-white transition';
+          dom.modeVideoBtn.className = 'min-h-[34px] px-4 py-1 rounded-full text-xs font-bold bg-red-600 text-white transition';
+          dom.shutterInner.className = 'w-full h-full rounded-full bg-red-600 transition-all duration-200 flex items-center justify-center';
+          dom.shutterInnerRing.classList.add('hidden');
+        }
+      }
+
+      function setZoom(val) {
+        state.zoom = Math.min(4.0, Math.max(1.0, Number(val)));
+        dom.zoomSlider.value = state.zoom;
+        dom.zoomValueText.textContent = `${state.zoom.toFixed(1)}x`;
+
+        dom.zoomPresetBtns.forEach(btn => {
+          const preset = Number(btn.dataset.zoom);
+          const isNear = Math.abs(state.zoom - preset) < 0.15;
+          btn.className = isNear
+            ? 'zoom-preset-btn min-h-[32px] px-2.5 py-1 rounded-full text-[11px] font-mono font-bold bg-[#00ff66]/20 text-[#00ff66] border border-[#00ff66]/50 active:scale-95 transition'
+            : 'zoom-preset-btn min-h-[32px] px-2.5 py-1 rounded-full text-[11px] font-mono text-neutral-400 hover:text-white active:scale-95 transition';
+        });
+      }
+
+      // ==========================================
+      // 13. ジャイロ・傾きセンサー連携
+      // ==========================================
+      function handleDeviceOrientation(event) {
+        if (typeof event.beta === 'number' && typeof event.gamma === 'number') {
+          state.hasGyro = true;
+          state.roll = Math.max(-45, Math.min(45, event.gamma));
+          state.pitch = Math.max(-45, Math.min(45, event.beta - 65));
+          if (typeof event.alpha === 'number') {
+            state.heading = Math.round((360 - event.alpha) % 360);
+          }
+        }
+      }
+
+      async function enableOrientationSensor() {
+        try {
+          if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+            const perm = await DeviceOrientationEvent.requestPermission();
+            if (perm === 'granted') {
+              window.addEventListener('deviceorientation', handleDeviceOrientation);
+              showToast('GYRO ACTIVE // 傾きセンサーを有効化しました');
+            } else {
+              showToast('SENSOR DENIED // センサー許可が拒否されました');
+            }
+          } else {
+            window.addEventListener('deviceorientation', handleDeviceOrientation);
+            showToast('GYRO READY // 傾きセンサー連動を有効化しました');
+          }
+        } catch (err) {
+          console.warn('センサー初期化エラー:', err);
+          showToast('INFO // この端末では水平固定HUDを使用します');
+        }
+      }
+
+      // ==========================================
+      // 14. タッチ操作（2本指ピンチズーム & 1本指タップロックオン）
+      // ==========================================
+      function getTouchDistance(t1, t2) {
+        const dx = t1.clientX - t2.clientX;
+        const dy = t1.clientY - t2.clientY;
+        return Math.hypot(dx, dy);
+      }
+
+      function triggerTargetLockAtClientXY(clientX, clientY) {
+        const rect = dom.displayCanvas.getBoundingClientRect();
+        const xRatio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+        const yRatio = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
+        state.targetLock = {
+          xRatio,
+          yRatio,
+          createdAt: performance.now() / 1000
+        };
+      }
+
+      dom.displayCanvas.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 2) {
+          e.preventDefault();
+          state.isPinching = true;
+          state.pinchStartDist = getTouchDistance(e.touches[0], e.touches[1]);
+          state.pinchStartZoom = state.zoom;
+        } else if (e.touches.length === 1 && !state.isPinching) {
+          const touch = e.touches[0];
+          triggerTargetLockAtClientXY(touch.clientX, touch.clientY);
+        }
+      }, { passive: false });
+
+      dom.displayCanvas.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 2 && state.pinchStartDist > 0) {
+          e.preventDefault();
+          const currentDist = getTouchDistance(e.touches[0], e.touches[1]);
+          const scaleFactor = currentDist / state.pinchStartDist;
+          setZoom(state.pinchStartZoom * scaleFactor);
+        }
+      }, { passive: false });
+
+      dom.displayCanvas.addEventListener('touchend', (e) => {
+        if (e.touches.length < 2) {
+          state.isPinching = false;
+          state.pinchStartDist = 0;
+        }
+      });
+
+      // PCマウスクリックでのロックオンにも対応
+      dom.displayCanvas.addEventListener('click', (e) => {
+        triggerTargetLockAtClientXY(e.clientX, e.clientY);
+      });
+
+      // ==========================================
+      // 15. イベントリスナー登録
+      // ==========================================
+      dom.btnRetryCamera.addEventListener('click', initCamera);
+      dom.btnStartDemo.addEventListener('click', startDemoMode);
+      dom.btnSwitchCamera.addEventListener('click', () => {
+        if (state.isRecording) {
+          showToast('録画中はカメラを切り替えられません');
+          return;
+        }
+        state.facingMode = state.facingMode === 'environment' ? 'user' : 'environment';
+        initCamera();
+      });
+
+      dom.btnToggleHud.addEventListener('click', () => {
+        state.hudEnabled = !state.hudEnabled;
+        syncHudControlsUI();
+        showToast(state.hudEnabled ? 'TACTICAL HUD // 照準表示 ON' : 'TACTICAL HUD // 照準表示 OFF');
+      });
+
+      dom.hudStyleBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.hudEnabled = true;
+          state.hudStyle = btn.dataset.style;
+          syncHudControlsUI();
+        });
+      });
+      dom.modalStyleBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.hudEnabled = true;
+          state.hudStyle = btn.dataset.modalStyle;
+          syncHudControlsUI();
+        });
+      });
+
+      dom.zoomSlider.addEventListener('input', (e) => setZoom(e.target.value));
+      dom.zoomPresetBtns.forEach(btn => {
+        btn.addEventListener('click', () => setZoom(btn.dataset.zoom));
+      });
+
+      dom.modePhotoBtn.addEventListener('click', () => {
+        if (state.isRecording) return;
+        state.captureMode = 'photo';
+        syncShutterButtonAppearance();
+      });
+      dom.modeVideoBtn.addEventListener('click', () => {
+        if (state.isRecording) return;
+        state.captureMode = 'video';
+        syncShutterButtonAppearance();
+      });
+
+      dom.btnShutter.addEventListener('click', () => {
+        if (state.captureMode === 'photo') {
+          captureSilentPhoto();
+        } else {
+          toggleSilentVideoRecording();
+        }
+      });
+
+      dom.btnQuickBurn.addEventListener('click', () => {
+        state.burnHudInMedia = !state.burnHudInMedia;
+        syncBurnSettingUI();
+        showToast(state.burnHudInMedia ? '照準焼き込み: ON（照準ごと保存）' : '照準焼き込み: OFF（通常映像を保存）');
+      });
+
+      // 設定モーダル開閉＆各種トグル
+      dom.btnOpenSettings.addEventListener('click', () => dom.settingsModal.classList.remove('hidden'));
+      dom.btnCloseSettings.addEventListener('click', () => dom.settingsModal.classList.add('hidden'));
+      dom.btnDoneSettings.addEventListener('click', () => dom.settingsModal.classList.add('hidden'));
+
+      dom.settingHudEnabled.addEventListener('change', (e) => {
+        state.hudEnabled = e.target.checked;
+        syncHudControlsUI();
+      });
+      dom.settingBurnHud.addEventListener('change', (e) => {
+        state.burnHudInMedia = e.target.checked;
+        syncBurnSettingUI();
+      });
+      dom.settingShowGrid.addEventListener('change', (e) => {
+        state.showGrid = e.target.checked;
+      });
+      dom.settingShowTelemetry.addEventListener('change', (e) => {
+        state.showTelemetry = e.target.checked;
+      });
+      dom.settingMirrorFront.addEventListener('change', (e) => {
+        state.mirrorFrontCamera = e.target.checked;
+      });
+      dom.btnRequestGyro.addEventListener('click', enableOrientationSensor);
+
+      // ギャラリーモーダル開閉・共有・削除操作
+      dom.btnOpenGallery.addEventListener('click', () => {
+        renderGalleryModal();
+        dom.galleryModal.classList.remove('hidden');
+      });
+      dom.btnCloseGallery.addEventListener('click', () => {
+        dom.previewVideo.pause();
+        dom.galleryModal.classList.add('hidden');
+      });
+      dom.btnShareCurrent.addEventListener('click', shareCurrentMedia);
+
+      dom.btnDeleteCurrent.addEventListener('click', () => {
+        if (state.selectedMediaIndex >= 0 && state.selectedMediaIndex < state.mediaItems.length) {
+          const [removed] = state.mediaItems.splice(state.selectedMediaIndex, 1);
+          if (removed && removed.url) URL.revokeObjectURL(removed.url);
+          if (state.selectedMediaIndex >= state.mediaItems.length) {
+            state.selectedMediaIndex = state.mediaItems.length - 1;
+          }
+          updateBottomThumbnail();
+          renderGalleryModal();
+          showToast('DELETED // 選択データを削除しました');
+        }
+      });
+
+      dom.btnClearAllMedia.addEventListener('click', () => {
+        state.mediaItems.forEach(item => {
+          if (item.url) URL.revokeObjectURL(item.url);
+        });
+        state.mediaItems = [];
+        state.selectedMediaIndex = -1;
+        updateBottomThumbnail();
+        renderGalleryModal();
+        showToast('CLEARED // すべての撮影データを削除しました');
+      });
+
+      dom.btnOpenHelp.addEventListener('click', () => dom.helpModal.classList.remove('hidden'));
+      dom.btnCloseHelp.addEventListener('click', () => dom.helpModal.classList.add('hidden'));
+      dom.btnDoneHelp.addEventListener('click', () => dom.helpModal.classList.add('hidden'));
+
+      // ==========================================
+      // 16. アプリ起動エントリーポイント
+      // ==========================================
+      window.addEventListener('load', () => {
+        resizeDisplayCanvas();
+        syncHudControlsUI();
+        syncBurnSettingUI();
+        syncShutterButtonAppearance();
+        setZoom(1.0);
+
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission !== 'function') {
+          window.addEventListener('deviceorientation', handleDeviceOrientation);
+        }
+
+        initCamera();
+        requestAnimationFrame(renderLoop);
+      });
+    })();
+  </script>
+</body>
+</html>
