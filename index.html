@@ -447,7 +447,7 @@
         <div id="gallery-action-bar" class="hidden px-4 py-3 bg-neutral-900 border-t border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
           <div class="min-w-0">
             <div id="preview-meta-title" class="text-xs font-mono font-bold text-white truncate">SILENT_20261121.jpg</div>
-            <div id="preview-meta-sub" class="text-[11px] text-neutral-400">照準焼き込み: ON • 1280x720</div>
+            <div id="preview-meta-sub" class="text-[11px] text-neutral-400">照準焼き込み: ON • 1920x1080</div>
           </div>
           <div class="flex items-center justify-end gap-2 shrink-0">
             <button id="btn-delete-current" class="w-11 h-11 flex items-center justify-center rounded-xl bg-neutral-800 hover:bg-red-950 text-neutral-300 hover:text-red-400 transition" title="削除" aria-label="削除">
@@ -493,7 +493,7 @@
         <ul class="space-y-2.5 text-xs text-neutral-300 leading-relaxed">
           <li class="flex gap-2">
             <span class="text-[#00ff66] font-bold">●</span>
-            <span><strong>完全無音撮影・録画：</strong>シャッター音を鳴らさずに写真キャプチャと音声なし動画録画（audio: false）が行えます。</span>
+            <span><strong>完全無音撮影・録画：</strong>シャッター音を鳴らさずに高精細写真キャプチャと音声なし動画録画（audio: false）が行えます。</span>
           </li>
           <li class="flex gap-2">
             <span class="text-[#00ff66] font-bold">●</span>
@@ -736,7 +736,6 @@
           }
         }
 
-        // カメラAPIからzoom上限が返らない端末（iOS Safari・デモモード等）の性能別フォールバック
         if (!hwSupported) {
           const isTouchMobile = (navigator.maxTouchPoints > 0) || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
           if (state.isDemoMode) {
@@ -761,7 +760,6 @@
         state.hwMaxZoom = hwMax;
         state.lastAppliedHwZoom = 1.0;
 
-        // デバイス性能に応じたワンタップ倍率プリセット生成
         const presets = [];
         if (state.minZoom < 0.9) {
           presets.push(Number(state.minZoom.toFixed(1)));
@@ -898,7 +896,7 @@
       function resizeDialCanvas() {
         if (!dom.zoomDialCanvas || !dom.zoomDialCanvas.parentElement) return;
         const rect = dom.zoomDialCanvas.parentElement.getBoundingClientRect();
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const dpr = Math.min(window.devicePixelRatio || 1, 3);
         dom.zoomDialCanvas.width = Math.max(1, Math.floor(rect.width * dpr));
         dom.zoomDialCanvas.height = Math.max(1, Math.floor(rect.height * dpr));
         lastDialRenderKey = '';
@@ -934,12 +932,11 @@
         const h = dom.zoomDialCanvas.height;
         if (w <= 0 || h <= 0) return;
 
-        // ズーム値とサイズに変化がないフレームはスキップしてCPU/GPU負荷を節約
         const dialKey = `${w}x${h}:${state.zoom.toFixed(3)}:${state.maxZoom}`;
         if (dialKey === lastDialRenderKey) return;
         lastDialRenderKey = dialKey;
 
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const dpr = Math.min(window.devicePixelRatio || 1, 3);
         const cx = w * 0.5;
         const currentT = zoomToDialProgress(state.zoom);
 
@@ -988,7 +985,6 @@
           }
         }
 
-        // 中央の固定インジケーター針（shadowBlurを使わず二重線でネオン表現）
         dialCtx.strokeStyle = 'rgba(0, 255, 102, 0.35)';
         dialCtx.lineWidth = 5 * dpr;
         dialCtx.beginPath();
@@ -1014,7 +1010,6 @@
         dialCtx.restore();
       }
 
-      // ダイヤルのポインター操作イベント（タッチ＆マウス両対応）
       function getDialPxPerProgress() {
         const w = dom.zoomDialCanvas.getBoundingClientRect().width || 320;
         const octaves = Math.log2(Math.max(1.1, state.maxZoom / state.minZoom));
@@ -1100,8 +1095,50 @@
       }, { passive: false });
 
       // ==========================================
-      // 6. カメラ初期化＆ストリーム管理（完全無音）
+      // 6. カメラ初期化＆ストリーム管理（最高センサー解像度・連続AF対応・完全無音）
       // ==========================================
+      async function maximizeCameraSensorQuality(stream) {
+        const videoTrack = stream.getVideoTracks()[0];
+        if (!videoTrack) return;
+
+        try {
+          if (typeof videoTrack.getCapabilities === 'function' && typeof videoTrack.applyConstraints === 'function') {
+            const caps = videoTrack.getCapabilities();
+            const settings = videoTrack.getSettings ? videoTrack.getSettings() : {};
+            const adv = {};
+
+            // 1. センサー最大解像度（最大4K 3840x2160クラス）を引き出す
+            if (caps.width && caps.width.max && caps.height && caps.height.max) {
+              const targetMaxW = Math.min(3840, caps.width.max);
+              const targetMaxH = Math.min(2160, caps.height.max);
+              if ((settings.width || 0) < targetMaxW || (settings.height || 0) < targetMaxH) {
+                await videoTrack.applyConstraints({
+                  width: { ideal: targetMaxW },
+                  height: { ideal: targetMaxH }
+                }).catch(() => {});
+              }
+            }
+
+            // 2. 連続オートフォーカス・自動露出・オートホワイトバランスを有効化
+            if (Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')) {
+              adv.focusMode = 'continuous';
+            }
+            if (Array.isArray(caps.exposureMode) && caps.exposureMode.includes('continuous')) {
+              adv.exposureMode = 'continuous';
+            }
+            if (Array.isArray(caps.whiteBalanceMode) && caps.whiteBalanceMode.includes('continuous')) {
+              adv.whiteBalanceMode = 'continuous';
+            }
+
+            if (Object.keys(adv).length > 0) {
+              await videoTrack.applyConstraints({ advanced: [adv] }).catch(() => {});
+            }
+          }
+        } catch (e) {
+          console.warn('カメラ高画質制約の適用スキップ:', e);
+        }
+      }
+
       async function initCamera() {
         stopCurrentStream();
         state.isDemoMode = false;
@@ -1115,12 +1152,14 @@
         }
 
         try {
+          // 音声トラックなし（audio: false）かつ4K〜フルHDの高解像度優先リクエスト
           const constraints = {
             audio: false,
             video: {
               facingMode: { ideal: state.facingMode },
-              width: { ideal: 1920 },
-              height: { ideal: 1080 }
+              width: { ideal: 3840 },
+              height: { ideal: 2160 },
+              frameRate: { ideal: 60, min: 24 }
             }
           };
 
@@ -1129,10 +1168,17 @@
           dom.video.srcObject = stream;
           await dom.video.play();
 
+          // デバイスの最高解像度＆連続オートフォーカスを引き出す
+          await maximizeCameraSensorQuality(stream);
+
+          // デバイスのズーム性能を自動検出してダイヤルへ反映
           configureDeviceZoomRange(stream);
 
-          const modeName = state.facingMode === 'user' ? 'フロントカメラ' : 'バックカメラ';
-          showToast(`SILENT READY // ${modeName}起動 (MAX ${state.maxZoom.toFixed(1)}x)`);
+          const resLabel = dom.video.videoWidth && dom.video.videoHeight
+            ? `${dom.video.videoWidth}x${dom.video.videoHeight}`
+            : `MAX ${state.maxZoom.toFixed(1)}x`;
+          const modeName = state.facingMode === 'user' ? 'フロント' : 'バック';
+          showToast(`SILENT HD // ${modeName}起動 (${resLabel})`);
         } catch (err) {
           console.warn('カメラ取得エラー:', err);
           configureDeviceZoomRange(null);
@@ -1168,13 +1214,16 @@
       }
 
       // ==========================================
-      // 7. キャンバスサイズ追従＆レスポンシブ調整
+      // 7. キャンバスサイズ追従＆Retina 3x高精細スケーリング
       // ==========================================
       function resizeDisplayCanvas() {
         const rect = dom.displayCanvas.parentElement.getBoundingClientRect();
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        // 最新スマホのRetina 3xディスプレイでもネイティブ解像度でくっきり描画
+        const dpr = Math.min(window.devicePixelRatio || 1, 3);
         dom.displayCanvas.width = Math.max(1, Math.floor(rect.width * dpr));
         dom.displayCanvas.height = Math.max(1, Math.floor(rect.height * dpr));
+        displayCtx.imageSmoothingEnabled = true;
+        displayCtx.imageSmoothingQuality = 'high';
         resizeDialCanvas();
       }
       window.addEventListener('resize', resizeDisplayCanvas);
@@ -1183,7 +1232,7 @@
       });
 
       // ==========================================
-      // 8. 映像描画エンジン（実カメラ / デモ模擬映像 / ズーム / NVGキャッシュ）
+      // 8. 映像描画エンジン（実カメラ / デモ模擬映像 / 高品質ズーム / NVGキャッシュ）
       // ==========================================
       function getNvgOverlayCanvas(slot, targetW, targetH) {
         const key = `${targetW}x${targetH}`;
@@ -1196,14 +1245,12 @@
         const ctx = c.getContext('2d');
         ctx.clearRect(0, 0, targetW, targetH);
 
-        // 走査線を1回だけオフスクリーン描画
         ctx.fillStyle = 'rgba(0, 15, 4, 0.22)';
         const step = Math.max(3, Math.floor(targetH / 180));
         for (let y = 0; y < targetH; y += step * 2) {
           ctx.fillRect(0, y, targetW, step);
         }
 
-        // 周辺減光ビネットも1回だけ描画
         const radGrad = ctx.createRadialGradient(
           targetW * 0.5, targetH * 0.5, targetW * 0.22,
           targetW * 0.5, targetH * 0.5, Math.max(targetW, targetH) * 0.72
@@ -1274,6 +1321,8 @@
 
       function drawVideoFrame(ctx, targetW, targetH, applyNvgFilter, nowSec, isCapture = false) {
         ctx.save();
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
         ctx.fillStyle = '#050706';
         ctx.fillRect(0, 0, targetW, targetH);
 
@@ -1338,8 +1387,6 @@
 
       // ==========================================
       // 9. 軍用照準（ミリタリーHUD）超軽量・高フレームレート描画エンジン
-      //    ・静的パーツ（ブラケット/レティクル/目盛り/スコープ）はオフスクリーンキャッシュ化
-      //    ・shadowBlurを排除し、発光二重線＋パスバッチ描画で60fpsを完全維持
       // ==========================================
       function getStaticHudCanvas(slot, w, h, hudStyle, showGrid) {
         const key = `${w}x${h}:${hudStyle}:${showGrid ? 1 : 0}`;
@@ -1389,7 +1436,6 @@
           ctx.arc(cx, cy, scopeRadius, 0, Math.PI * 2, true);
           ctx.fill();
 
-          // 外周リング（グロー＋芯）
           ctx.strokeStyle = hudGlow;
           ctx.lineWidth = 5 * scale;
           ctx.beginPath();
@@ -1402,7 +1448,6 @@
           ctx.arc(cx, cy, scopeRadius, 0, Math.PI * 2);
           ctx.stroke();
 
-          // 360度目盛り一括描画
           ctx.lineWidth = 1.2 * scale;
           ctx.beginPath();
           for (let deg = 0; deg < 360; deg += 15) {
@@ -1414,7 +1459,7 @@
           ctx.stroke();
         }
 
-        // B. 四隅のターゲットブラケット（1パスにまとめて描画）
+        // B. 四隅のターゲットブラケット
         const marginX = Math.max(18 * scale, w * 0.05);
         const marginY = Math.max(66 * scale, h * 0.09);
         const bracketLen = 28 * scale;
@@ -1484,7 +1529,6 @@
         ctx.lineWidth = 1.6 * scale;
         ctx.stroke(reticlePath);
 
-        // 中央極小ドット
         ctx.fillStyle = hudGreen;
         ctx.beginPath();
         ctx.arc(cx, cy, 2.0 * scale, 0, Math.PI * 2);
@@ -1516,7 +1560,6 @@
         return c;
       }
 
-      // 1秒に1回だけ日時文字列を更新して毎フレームの Date 生成・文字列結合を削減
       let cachedSecondKey = -1;
       let cachedDateTimeStr = '';
       function getFormattedDateTimeStr() {
@@ -1533,12 +1576,10 @@
       const CARDINALS = { 0: 'N', 45: 'NE', 90: 'E', 135: 'SE', 180: 'S', 225: 'SW', 270: 'W', 315: 'NW' };
 
       function drawMilitaryHUD(ctx, w, h, nowSec, isCapture = false) {
-        // 1. 静的HUDレイヤーをオフスクリーンキャッシュから1回で高速転送
         const cacheSlot = isCapture ? hudCache.capture : hudCache.display;
         const staticHud = getStaticHudCanvas(cacheSlot, w, h, state.hudStyle, state.showGrid);
         ctx.drawImage(staticHud, 0, 0);
 
-        // 2. 動的要素（方位コンパス・水平バー・テレメトリ文字・タップロックオン枠）のみ軽量描画
         const hudGreen = '#00ff66';
         const hudDim = 'rgba(0, 255, 102, 0.38)';
         const cx = w * 0.5;
@@ -1555,7 +1596,7 @@
         ctx.save();
         ctx.lineCap = 'square';
 
-        // A. 水平インジケーター（1パスにまとめて描画）
+        // A. 水平インジケーター
         ctx.save();
         ctx.translate(cx, cy);
         if (activeRoll !== 0) {
@@ -1606,7 +1647,6 @@
           const startDeg = Math.floor(activeHeading - (tapeW / 2) / pxPerDeg) - 5;
           const endDeg = Math.ceil(activeHeading + (tapeW / 2) / pxPerDeg) + 5;
 
-          // 15度刻み・5度刻みの目盛りをそれぞれ1パスずつに集約
           const majorPath = new Path2D();
           const minorPath = new Path2D();
 
@@ -1631,7 +1671,6 @@
           ctx.stroke(minorPath);
           ctx.restore();
 
-          // 中央方位ポインター三角
           ctx.fillStyle = hudGreen;
           ctx.beginPath();
           ctx.moveTo(cx, tapeY + 10 * scale);
@@ -1640,7 +1679,6 @@
           ctx.closePath();
           ctx.fill();
 
-          // 左右テレメトリテキスト
           const estRange = Math.max(15, Math.round(180 / state.zoom));
           const fontSize = Math.max(10, Math.round(11 * scale));
           ctx.font = `700 ${fontSize}px "JetBrains Mono", monospace`;
@@ -1748,17 +1786,63 @@
       }
 
       // ==========================================
-      // 11. 無音写真撮影（JPEGキャプチャ）
+      // 11. 出力解像度の最適化計算（縦画面でもフルセンサー高画質を維持）
+      // ==========================================
+      function computeHighResCaptureSize(maxShortSide, maxLongSide) {
+        const dispW = Math.max(1, dom.displayCanvas.width);
+        const dispH = Math.max(1, dom.displayCanvas.height);
+        const aspect = dispW / dispH;
+        const isPortrait = aspect < 1;
+
+        // 実カメラのネイティブ解像度を取得（縦持ち時はセンサークロップ実効幅も考慮）
+        let sensorShort = maxShortSide;
+        let sensorLong = maxLongSide;
+        if (!state.isDemoMode && dom.video.videoWidth && dom.video.videoHeight) {
+          const vw = dom.video.videoWidth;
+          const vh = dom.video.videoHeight;
+          const vMin = Math.min(vw, vh);
+          const vMax = Math.max(vw, vh);
+          // 縦画面クロップ時はセンサ短辺が実質的な長辺基準になるため、十分な高解像度を確保
+          sensorShort = Math.max(vMin, Math.min(maxShortSide, Math.round(vMax * (isPortrait ? aspect : 1))));
+          sensorLong = Math.max(vMax, maxLongSide);
+        }
+
+        let outW, outH;
+        if (isPortrait) {
+          outW = Math.min(maxShortSide, Math.max(1080, sensorShort));
+          outH = Math.round(outW / aspect);
+          if (outH > maxLongSide) {
+            outH = maxLongSide;
+            outW = Math.round(outH * aspect);
+          }
+        } else {
+          outH = Math.min(maxShortSide, Math.max(1080, sensorShort));
+          outW = Math.round(outH * aspect);
+          if (outW > maxLongSide) {
+            outW = maxLongSide;
+            outH = Math.round(outW / aspect);
+          }
+        }
+
+        // 動画エンコーダ互換のため必ず偶数ピクセルにする
+        outW = outW % 2 === 0 ? outW : outW + 1;
+        outH = outH % 2 === 0 ? outH : outH + 1;
+        return { outW, outH };
+      }
+
+      // ==========================================
+      // 12. 無音写真撮影（フルセンサー高精細JPEGキャプチャ）
       // ==========================================
       function captureSilentPhoto() {
         try {
           triggerVisualShutterFlash();
 
-          const aspect = dom.displayCanvas.width / Math.max(1, dom.displayCanvas.height);
-          const outH = 1080;
-          const outW = Math.round(outH * aspect);
+          // 最大2160x3840（4K級）のネイティブ高解像度で出力
+          const { outW, outH } = computeHighResCaptureSize(2160, 3840);
           captureCanvas.width = outW;
           captureCanvas.height = outH;
+          captureCtx.imageSmoothingEnabled = true;
+          captureCtx.imageSmoothingQuality = 'high';
 
           const nowSec = performance.now() / 1000;
           const burnNvg = state.burnHudInMedia && state.hudEnabled && state.hudStyle === 'nvg';
@@ -1790,8 +1874,8 @@
             });
 
             const burnText = (state.burnHudInMedia && state.hudEnabled) ? '照準合成済' : '通常映像';
-            showToast(`CAPTURED // 無音撮影完了 (${burnText})`);
-          }, 'image/jpeg', 0.92);
+            showToast(`CAPTURED // 高画質無音撮影 (${outW}x${outH}・${burnText})`);
+          }, 'image/jpeg', 0.97);
         } catch (err) {
           console.error('写真撮影エラー:', err);
           showToast('ERROR // 撮影中にエラーが発生しました');
@@ -1799,7 +1883,7 @@
       }
 
       // ==========================================
-      // 12. 無音動画録画（MediaRecorder / 音声トラックなし）
+      // 13. 無音動画録画（フルHD 1080p・高ビットレート12Mbps・音声トラックなし）
       // ==========================================
       function toggleSilentVideoRecording() {
         if (state.isRecording) {
@@ -1816,17 +1900,18 @@
             return;
           }
 
-          const aspect = dom.displayCanvas.width / Math.max(1, dom.displayCanvas.height);
-          const outH = 720;
-          const outW = Math.round(outH * aspect);
-          captureCanvas.width = outW % 2 === 0 ? outW : outW + 1;
-          captureCanvas.height = outH % 2 === 0 ? outH : outH + 1;
+          // 縦画面でも短辺1080px（1080x1920 フルHDクラス）の高解像度で録画
+          const { outW, outH } = computeHighResCaptureSize(1080, 1920);
+          captureCanvas.width = outW;
+          captureCanvas.height = outH;
+          captureCtx.imageSmoothingEnabled = true;
+          captureCtx.imageSmoothingQuality = 'high';
 
           const nowSec = performance.now() / 1000;
           const burnNvg = state.burnHudInMedia && state.hudEnabled && state.hudStyle === 'nvg';
-          drawVideoFrame(captureCtx, captureCanvas.width, captureCanvas.height, burnNvg, nowSec, true);
+          drawVideoFrame(captureCtx, outW, outH, burnNvg, nowSec, true);
           if (state.burnHudInMedia && state.hudEnabled) {
-            drawMilitaryHUD(captureCtx, captureCanvas.width, captureCanvas.height, nowSec, true);
+            drawMilitaryHUD(captureCtx, outW, outH, nowSec, true);
           }
 
           const canvasStream = captureCanvas.captureStream(30);
@@ -1846,8 +1931,16 @@
             }
           }
 
-          const options = selectedMime ? { mimeType: selectedMime } : {};
-          const recorder = new MediaRecorder(canvasStream, options);
+          // 12Mbpsの高ビットレート指定でブロックノイズを防止
+          const recorderOptions = { videoBitsPerSecond: 12000000 };
+          if (selectedMime) recorderOptions.mimeType = selectedMime;
+
+          let recorder;
+          try {
+            recorder = new MediaRecorder(canvasStream, recorderOptions);
+          } catch (_) {
+            recorder = new MediaRecorder(canvasStream, selectedMime ? { mimeType: selectedMime } : {});
+          }
 
           state.recordedChunks = [];
           state.mediaRecorder = recorder;
@@ -1866,7 +1959,7 @@
             const blob = new Blob(state.recordedChunks, { type: finalMime });
             const videoUrl = URL.createObjectURL(blob);
             const filename = generateTimestampFilename('SILENT_MOV', ext);
-            const thumbUrl = captureCanvas.toDataURL('image/jpeg', 0.75);
+            const thumbUrl = captureCanvas.toDataURL('image/jpeg', 0.85);
 
             addMediaItem({
               id: Date.now() + Math.random(),
@@ -1881,12 +1974,12 @@
               resolution: `${captureCanvas.width}x${captureCanvas.height}`
             });
 
-            showToast('SAVED // 無音動画の録画を保存しました');
+            showToast(`SAVED // 高画質無音動画を保存 (${captureCanvas.width}x${captureCanvas.height})`);
           };
 
           recorder.start(250);
           updateRecordingUI(true);
-          showToast('REC START // 完全無音録画を開始');
+          showToast('REC START // 高画質・完全無音録画を開始');
         } catch (err) {
           console.error('録画開始エラー:', err);
           state.isRecording = false;
@@ -1938,7 +2031,7 @@
       }
 
       // ==========================================
-      // 13. ギャラリーデータ管理・Web Share API共有・一括ZIPダウンロード
+      // 14. ギャラリーデータ管理・Web Share API共有・一括ZIPダウンロード
       // ==========================================
       function addMediaItem(item) {
         state.mediaItems.unshift(item);
@@ -2005,7 +2098,6 @@
         dom.btnDownloadCurrent.href = current.url;
         dom.btnDownloadCurrent.download = current.filename;
 
-        // サムネイルリスト構築
         dom.galleryThumbnails.innerHTML = '';
         state.mediaItems.forEach((item, idx) => {
           const btn = document.createElement('button');
@@ -2026,7 +2118,6 @@
         });
       }
 
-      // 純粋JavaScript製 無劣化ZIPアーカイブビルダー
       const crcTable = (() => {
         const table = new Uint32Array(256);
         for (let i = 0; i < 256; i++) {
@@ -2213,7 +2304,7 @@
       }
 
       // ==========================================
-      // 14. UI状態同期ヘルパー
+      // 15. UI状態同期ヘルパー
       // ==========================================
       function syncHudControlsUI() {
         if (state.hudEnabled) {
@@ -2301,7 +2392,7 @@
       }
 
       // ==========================================
-      // 15. ジャイロ・傾きセンサー連携
+      // 16. ジャイロ・傾きセンサー連携
       // ==========================================
       function handleDeviceOrientation(event) {
         if (typeof event.beta === 'number' && typeof event.gamma === 'number') {
@@ -2335,7 +2426,7 @@
       }
 
       // ==========================================
-      // 16. タッチ操作（2本指ピンチズーム & 1本指タップロックオン）
+      // 17. タッチ操作（2本指ピンチズーム & 1本指タップロックオン＋光学AF誘導）
       // ==========================================
       function getTouchDistance(t1, t2) {
         const dx = t1.clientX - t2.clientX;
@@ -2352,6 +2443,21 @@
           yRatio,
           createdAt: performance.now() / 1000
         };
+
+        // 端末がタップ位置フォーカス（pointsOfInterest）に対応していればピントを誘導
+        if (state.stream && !state.isDemoMode) {
+          const track = state.stream.getVideoTracks()[0];
+          if (track && typeof track.getCapabilities === 'function' && typeof track.applyConstraints === 'function') {
+            try {
+              const caps = track.getCapabilities();
+              if (caps && 'pointsOfInterest' in caps) {
+                track.applyConstraints({
+                  advanced: [{ pointsOfInterest: [{ x: xRatio, y: yRatio }] }]
+                }).catch(() => {});
+              }
+            } catch (_) {}
+          }
+        }
       }
 
       dom.displayCanvas.addEventListener('touchstart', (e) => {
@@ -2389,7 +2495,7 @@
       });
 
       // ==========================================
-      // 17. イベントリスナー登録
+      // 18. イベントリスナー登録
       // ==========================================
       dom.btnRetryCamera.addEventListener('click', initCamera);
       dom.btnStartDemo.addEventListener('click', startDemoMode);
@@ -2513,7 +2619,7 @@
       dom.btnDoneHelp.addEventListener('click', () => dom.helpModal.classList.add('hidden'));
 
       // ==========================================
-      // 18. アプリ起動エントリーポイント
+      // 19. アプリ起動エントリーポイント
       // ==========================================
       window.addEventListener('load', () => {
         resizeDisplayCanvas();
