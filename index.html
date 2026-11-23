@@ -541,7 +541,8 @@
         effectiveDigitalZoom: 1.0,
         zoomPresets: [1.0, 2.0, 4.0],
 
-        // ズームダイヤル物理演算・アニメーション状態
+        // ズームダイヤル物理演算・キャッシュ状態
+        dialTicks: [],
         dialVelocity: 0,
         dialIsDragging: false,
         dialLastX: 0,
@@ -676,6 +677,16 @@
       const captureCtx = captureCanvas.getContext('2d', { alpha: false });
 
       // ==========================================
+      // 2.5 高速描画用オフスクリーンキャッシュ（60fps維持の要）
+      // ==========================================
+      const hudCache = {
+        display: { canvas: document.createElement('canvas'), key: '' },
+        capture: { canvas: document.createElement('canvas'), key: '' },
+        nvgDisplay: { canvas: document.createElement('canvas'), key: '' },
+        nvgCapture: { canvas: document.createElement('canvas'), key: '' }
+      };
+
+      // ==========================================
       // 3. トースト通知＆シャッターフラッシュ演出
       // ==========================================
       let toastTimeout = null;
@@ -735,7 +746,6 @@
             minZ = 1.0;
             maxZ = 3.0;
           } else if (isTouchMobile) {
-            // 最新スマホ相当のズームレンジ（1.0x 〜 8.0x）
             minZ = 1.0;
             maxZ = 8.0;
           } else {
@@ -771,9 +781,58 @@
         state.zoomPresets = [...new Set(presets)];
         dom.zoomMaxBadge.textContent = `${hwSupported ? 'OPT/DIG' : 'DIG'} MAX ${state.maxZoom.toFixed(1)}x`;
 
+        buildDialTicksCache();
         buildZoomPresetButtons();
         const initialZoom = state.minZoom <= 1.0 && state.maxZoom >= 1.0 ? 1.0 : state.minZoom;
         setZoom(initialZoom, true);
+      }
+
+      function buildDialTicksCache() {
+        const ticks = [];
+        const addTick = (val, isMajor, labelText) => {
+          if (val >= state.minZoom - 0.001 && val <= state.maxZoom + 0.001) {
+            ticks.push({
+              val,
+              t: zoomToDialProgress(val),
+              isMajor,
+              labelText
+            });
+          }
+        };
+
+        if (state.minZoom < 1.0) {
+          for (let v = state.minZoom; v < 0.99; v += 0.1) {
+            const rv = Math.round(v * 10) / 10;
+            const isM = Math.abs(rv - state.minZoom) < 0.01;
+            addTick(rv, isM, isM ? `${rv.toFixed(1)}x` : '');
+          }
+        }
+
+        const fineMax = Math.min(state.maxZoom, 3.0);
+        for (let v = 1.0; v <= fineMax + 0.001; v += 0.1) {
+          const rv = Math.round(v * 10) / 10;
+          const isM = Math.abs(rv - Math.round(rv)) < 0.01;
+          addTick(rv, isM, isM ? `${Math.round(rv)}x` : '');
+        }
+
+        if (state.maxZoom > 3.0) {
+          const midMax = Math.min(state.maxZoom, 10.0);
+          for (let v = 3.5; v <= midMax + 0.001; v += 0.5) {
+            const rv = Math.round(v * 10) / 10;
+            const isM = Math.abs(rv - Math.round(rv)) < 0.01;
+            addTick(rv, isM, isM ? `${Math.round(rv)}x` : '');
+          }
+        }
+
+        if (state.maxZoom > 10.0) {
+          for (let v = 11.0; v <= state.maxZoom + 0.001; v += 1.0) {
+            const rv = Math.round(v);
+            const isM = rv % 5 === 0 || Math.abs(rv - state.maxZoom) < 0.1;
+            addTick(rv, isM, isM ? `${rv}x` : '');
+          }
+        }
+
+        state.dialTicks = ticks;
       }
 
       function buildZoomPresetButtons() {
@@ -792,11 +851,11 @@
         });
       }
 
+      let lastRenderedPresetKey = '';
       function updateZoomPresetHighlights() {
         const buttons = dom.zoomPresetContainer.querySelectorAll('.zoom-preset-btn');
         if (!buttons.length) return;
 
-        // 現在のズーム倍率に最も近いプリセットを特定（区間ベース）
         let activeIdx = 0;
         for (let i = 0; i < state.zoomPresets.length; i++) {
           if (state.zoom >= state.zoomPresets[i] - 0.05) {
@@ -804,12 +863,17 @@
           }
         }
 
+        const zoomText = `${state.zoom.toFixed(1)}x`;
+        const renderKey = `${activeIdx}:${zoomText}`;
+        if (renderKey === lastRenderedPresetKey) return;
+        lastRenderedPresetKey = renderKey;
+
         buttons.forEach((btn, idx) => {
           const baseVal = Number(btn.dataset.zoom);
           const baseLabel = `${Number.isInteger(baseVal) ? baseVal : baseVal.toFixed(1)}x`;
           if (idx === activeIdx) {
             btn.className = 'zoom-preset-btn min-w-[44px] h-[28px] px-2.5 rounded-full text-[11px] font-mono font-bold bg-[#00ff66] text-black shadow-[0_0_12px_rgba(0,255,102,0.55)] scale-105 transition-all flex items-center justify-center';
-            btn.textContent = `${state.zoom.toFixed(1)}x`;
+            btn.textContent = zoomText;
           } else {
             btn.className = 'zoom-preset-btn min-w-[36px] h-[28px] px-2 rounded-full text-[11px] font-mono font-semibold bg-black/75 text-neutral-300 border border-white/15 hover:text-white transition-all flex items-center justify-center';
             btn.textContent = baseLabel;
@@ -837,10 +901,10 @@
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         dom.zoomDialCanvas.width = Math.max(1, Math.floor(rect.width * dpr));
         dom.zoomDialCanvas.height = Math.max(1, Math.floor(rect.height * dpr));
+        lastDialRenderKey = '';
       }
 
       function updateDialPhysicsAndRender() {
-        // プリセットタップ時のスムーズ補間アニメーション
         if (state.dialTargetZoom !== null && !state.dialIsDragging) {
           const diff = state.dialTargetZoom - state.zoom;
           if (Math.abs(diff) < 0.015) {
@@ -849,9 +913,7 @@
           } else {
             setZoom(state.zoom + diff * 0.24, true);
           }
-        }
-        // フリック後の慣性回転アニメーション
-        else if (!state.dialIsDragging && Math.abs(state.dialVelocity) > 0.00015) {
+        } else if (!state.dialIsDragging && Math.abs(state.dialVelocity) > 0.00015) {
           const currentT = zoomToDialProgress(state.zoom);
           const nextT = currentT + state.dialVelocity;
           if (nextT <= 0 || nextT >= 1) {
@@ -866,80 +928,41 @@
         renderZoomDial();
       }
 
+      let lastDialRenderKey = '';
       function renderZoomDial() {
         const w = dom.zoomDialCanvas.width;
         const h = dom.zoomDialCanvas.height;
         if (w <= 0 || h <= 0) return;
 
+        // ズーム値とサイズに変化がないフレームはスキップしてCPU/GPU負荷を節約
+        const dialKey = `${w}x${h}:${state.zoom.toFixed(3)}:${state.maxZoom}`;
+        if (dialKey === lastDialRenderKey) return;
+        lastDialRenderKey = dialKey;
+
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         const cx = w * 0.5;
         const currentT = zoomToDialProgress(state.zoom);
 
-        // ダイヤル全長のピクセル幅（1.0x〜2.0x 等が指で回しやすい間隔になるよう自動算出）
         const octaves = Math.log2(Math.max(1.1, state.maxZoom / state.minZoom));
         const pxPerOctave = 145 * dpr;
         const totalDialSpanPx = Math.max(w * 0.75, octaves * pxPerOctave);
 
         dialCtx.clearRect(0, 0, w, h);
-
-        // ダイヤルの全目盛りを生成（0.1x / 0.5x / 1.0x 刻み）
-        const ticks = [];
-        const addTick = (val, isMajor, labelText) => {
-          if (val >= state.minZoom - 0.001 && val <= state.maxZoom + 0.001) {
-            ticks.push({ val, isMajor, labelText });
-          }
-        };
-
-        if (state.minZoom < 1.0) {
-          for (let v = state.minZoom; v < 0.99; v += 0.1) {
-            const rv = Math.round(v * 10) / 10;
-            const isM = Math.abs(rv - state.minZoom) < 0.01;
-            addTick(rv, isM, isM ? `${rv.toFixed(1)}x` : '');
-          }
-        }
-
-        // 1.0x 〜 3.0x までは 0.1x 刻み
-        const fineMax = Math.min(state.maxZoom, 3.0);
-        for (let v = 1.0; v <= fineMax + 0.001; v += 0.1) {
-          const rv = Math.round(v * 10) / 10;
-          const isM = Math.abs(rv - Math.round(rv)) < 0.01;
-          addTick(rv, isM, isM ? `${Math.round(rv)}x` : '');
-        }
-
-        // 3.0x 〜 10.0x までは 0.5x 刻み
-        if (state.maxZoom > 3.0) {
-          const midMax = Math.min(state.maxZoom, 10.0);
-          for (let v = 3.5; v <= midMax + 0.001; v += 0.5) {
-            const rv = Math.round(v * 10) / 10;
-            const isM = Math.abs(rv - Math.round(rv)) < 0.01;
-            addTick(rv, isM, isM ? `${Math.round(rv)}x` : '');
-          }
-        }
-
-        // 10.0x 超は 1.0x 刻み
-        if (state.maxZoom > 10.0) {
-          for (let v = 11.0; v <= state.maxZoom + 0.001; v += 1.0) {
-            const rv = Math.round(v);
-            const isM = rv % 5 === 0 || Math.abs(rv - state.maxZoom) < 0.1;
-            addTick(rv, isM, isM ? `${rv}x` : '');
-          }
-        }
-
         dialCtx.save();
         dialCtx.font = `700 ${Math.round(9.5 * dpr)}px "JetBrains Mono", monospace`;
         dialCtx.textAlign = 'center';
 
-        ticks.forEach((tick) => {
-          const tickT = zoomToDialProgress(tick.val);
-          const dx = (tickT - currentT) * totalDialSpanPx;
+        const ticks = state.dialTicks;
+        for (let i = 0; i < ticks.length; i++) {
+          const tick = ticks[i];
+          const dx = (tick.t - currentT) * totalDialSpanPx;
           const x = cx + dx;
 
-          if (x < -20 * dpr || x > w + 20 * dpr) return;
+          if (x < -20 * dpr || x > w + 20 * dpr) continue;
 
-          // 円筒ドラムの湾曲＆端フェード演出
           const normDist = Math.min(1, Math.abs(dx) / (w * 0.48));
           const alpha = Math.max(0.08, Math.cos(normDist * Math.PI * 0.48));
-          const curveDrop = Math.pow(normDist, 2) * 5 * dpr;
+          const curveDrop = normDist * normDist * 5 * dpr;
 
           const isNearCenter = Math.abs(dx) < 6 * dpr;
           const tickH = (tick.isMajor ? 13 : 7) * dpr;
@@ -963,21 +986,24 @@
               : `rgba(210, 225, 215, ${alpha * 0.85})`;
             dialCtx.fillText(tick.labelText, x, baseY - tickH - 4 * dpr);
           }
-        });
+        }
 
-        // 中央の固定インジケーター針（#00ff66）
-        dialCtx.shadowColor = 'rgba(0, 255, 102, 0.85)';
-        dialCtx.shadowBlur = 6 * dpr;
-        dialCtx.strokeStyle = '#00ff66';
-        dialCtx.fillStyle = '#00ff66';
-        dialCtx.lineWidth = 2.2 * dpr;
-
+        // 中央の固定インジケーター針（shadowBlurを使わず二重線でネオン表現）
+        dialCtx.strokeStyle = 'rgba(0, 255, 102, 0.35)';
+        dialCtx.lineWidth = 5 * dpr;
         dialCtx.beginPath();
         dialCtx.moveTo(cx, h - 4 * dpr);
         dialCtx.lineTo(cx, h - 24 * dpr);
         dialCtx.stroke();
 
-        // 上部の小さな三角ポインター
+        dialCtx.strokeStyle = '#00ff66';
+        dialCtx.fillStyle = '#00ff66';
+        dialCtx.lineWidth = 2.0 * dpr;
+        dialCtx.beginPath();
+        dialCtx.moveTo(cx, h - 4 * dpr);
+        dialCtx.lineTo(cx, h - 24 * dpr);
+        dialCtx.stroke();
+
         dialCtx.beginPath();
         dialCtx.moveTo(cx, 6 * dpr);
         dialCtx.lineTo(cx - 4 * dpr, 1 * dpr);
@@ -1012,7 +1038,6 @@
 
         if (Math.abs(dx) > 2) state.dialDragMoved = true;
 
-        // 指を左へ動かすと倍率UP、右へ動かすと倍率DOWN（最新スマホ標準のホイール操作感）
         const deltaT = -dx / getDialPxPerProgress();
         const nextT = zoomToDialProgress(state.zoom) + deltaT;
         setZoom(dialProgressToZoom(nextT));
@@ -1026,7 +1051,6 @@
         if (!state.dialIsDragging) return;
         state.dialIsDragging = false;
 
-        // ほとんど動かさずにタップした場合は、タップした目盛り位置へスムーズ移動
         if (!state.dialDragMoved && typeof clientX === 'number') {
           const rect = dom.zoomDialCanvas.getBoundingClientRect();
           const offsetFromCenter = clientX - (rect.left + rect.width * 0.5);
@@ -1066,7 +1090,6 @@
         if (state.dialIsDragging) onDialPointerUp(e.clientX);
       });
 
-      // PCマウスホイールでもダイヤル回転可能
       dom.zoomDialCanvas.addEventListener('wheel', (e) => {
         e.preventDefault();
         state.dialTargetZoom = null;
@@ -1092,7 +1115,6 @@
         }
 
         try {
-          // 音声トラックを一切要求しない（audio: false）ことで完全無音動作を保証
           const constraints = {
             audio: false,
             video: {
@@ -1107,7 +1129,6 @@
           dom.video.srcObject = stream;
           await dom.video.play();
 
-          // デバイスのズーム性能を自動検出してダイヤルへ反映
           configureDeviceZoomRange(stream);
 
           const modeName = state.facingMode === 'user' ? 'フロントカメラ' : 'バックカメラ';
@@ -1162,8 +1183,39 @@
       });
 
       // ==========================================
-      // 8. 映像描画エンジン（実カメラ / デモ模擬映像 / ズーム / フィルター）
+      // 8. 映像描画エンジン（実カメラ / デモ模擬映像 / ズーム / NVGキャッシュ）
       // ==========================================
+      function getNvgOverlayCanvas(slot, targetW, targetH) {
+        const key = `${targetW}x${targetH}`;
+        if (slot.key === key) return slot.canvas;
+
+        slot.key = key;
+        const c = slot.canvas;
+        c.width = targetW;
+        c.height = targetH;
+        const ctx = c.getContext('2d');
+        ctx.clearRect(0, 0, targetW, targetH);
+
+        // 走査線を1回だけオフスクリーン描画
+        ctx.fillStyle = 'rgba(0, 15, 4, 0.22)';
+        const step = Math.max(3, Math.floor(targetH / 180));
+        for (let y = 0; y < targetH; y += step * 2) {
+          ctx.fillRect(0, y, targetW, step);
+        }
+
+        // 周辺減光ビネットも1回だけ描画
+        const radGrad = ctx.createRadialGradient(
+          targetW * 0.5, targetH * 0.5, targetW * 0.22,
+          targetW * 0.5, targetH * 0.5, Math.max(targetW, targetH) * 0.72
+        );
+        radGrad.addColorStop(0, 'rgba(0,0,0,0)');
+        radGrad.addColorStop(1, 'rgba(0, 10, 2, 0.78)');
+        ctx.fillStyle = radGrad;
+        ctx.fillRect(0, 0, targetW, targetH);
+
+        return c;
+      }
+
       function renderDemoSource(ctx, width, height, nowSec) {
         const grad = ctx.createLinearGradient(0, 0, 0, height);
         grad.addColorStop(0, '#0a141d');
@@ -1179,21 +1231,19 @@
         const driftX = Math.sin(nowSec * 0.35) * 60;
         const driftY = (nowSec * 35) % 40;
 
+        ctx.beginPath();
         for (let i = 0; i < 12; i++) {
           const y = horizonY + Math.pow(i / 11, 1.7) * (height - horizonY) + driftY * (i / 11);
           if (y <= height) {
-            ctx.beginPath();
             ctx.moveTo(0, y);
             ctx.lineTo(width, y);
-            ctx.stroke();
           }
         }
         for (let i = -8; i <= 8; i++) {
-          ctx.beginPath();
           ctx.moveTo(width * 0.5 + i * 25 + driftX * 0.2, horizonY);
           ctx.lineTo(width * 0.5 + i * 160 + driftX, height);
-          ctx.stroke();
         }
+        ctx.stroke();
 
         ctx.fillStyle = 'rgba(15, 28, 36, 0.85)';
         const buildings = [
@@ -1222,7 +1272,7 @@
         ctx.restore();
       }
 
-      function drawVideoFrame(ctx, targetW, targetH, applyNvgFilter, nowSec) {
+      function drawVideoFrame(ctx, targetW, targetH, applyNvgFilter, nowSec, isCapture = false) {
         ctx.save();
         ctx.fillStyle = '#050706';
         ctx.fillRect(0, 0, targetW, targetH);
@@ -1267,7 +1317,7 @@
 
         ctx.restore();
 
-        // ナイトビジョン風（NVG）グリーンフィルター＆走査線効果
+        // ナイトビジョン風（NVG）グリーンフィルター（キャッシュ済みオーバーレイで高速合成）
         if (applyNvgFilter) {
           ctx.save();
           ctx.fillStyle = 'rgba(0, 255, 102, 0.24)';
@@ -1279,30 +1329,32 @@
           ctx.fillRect(0, 0, targetW, targetH);
           ctx.globalCompositeOperation = 'source-over';
 
-          ctx.fillStyle = 'rgba(0, 15, 4, 0.22)';
-          const step = Math.max(3, Math.floor(targetH / 180));
-          for (let y = 0; y < targetH; y += step * 2) {
-            ctx.fillRect(0, y, targetW, step);
-          }
-
-          const radGrad = ctx.createRadialGradient(
-            targetW * 0.5, targetH * 0.5, targetW * 0.22,
-            targetW * 0.5, targetH * 0.5, Math.max(targetW, targetH) * 0.72
-          );
-          radGrad.addColorStop(0, 'rgba(0,0,0,0)');
-          radGrad.addColorStop(1, 'rgba(0, 10, 2, 0.78)');
-          ctx.fillStyle = radGrad;
-          ctx.fillRect(0, 0, targetW, targetH);
+          const nvgSlot = isCapture ? hudCache.nvgCapture : hudCache.nvgDisplay;
+          const overlayCanvas = getNvgOverlayCanvas(nvgSlot, targetW, targetH);
+          ctx.drawImage(overlayCanvas, 0, 0);
           ctx.restore();
         }
       }
 
       // ==========================================
-      // 9. 軍用照準（ミリタリーHUD）静的精密描画エンジン
+      // 9. 軍用照準（ミリタリーHUD）超軽量・高フレームレート描画エンジン
+      //    ・静的パーツ（ブラケット/レティクル/目盛り/スコープ）はオフスクリーンキャッシュ化
+      //    ・shadowBlurを排除し、発光二重線＋パスバッチ描画で60fpsを完全維持
       // ==========================================
-      function drawMilitaryHUD(ctx, w, h, nowSec) {
+      function getStaticHudCanvas(slot, w, h, hudStyle, showGrid) {
+        const key = `${w}x${h}:${hudStyle}:${showGrid ? 1 : 0}`;
+        if (slot.key === key) return slot.canvas;
+
+        slot.key = key;
+        const c = slot.canvas;
+        c.width = w;
+        c.height = h;
+        const ctx = c.getContext('2d');
+        ctx.clearRect(0, 0, w, h);
+
         const hudGreen = '#00ff66';
-        const hudDim = 'rgba(0, 255, 102, 0.36)';
+        const hudGlow = 'rgba(0, 255, 102, 0.24)';
+        const hudDim = 'rgba(0, 255, 102, 0.38)';
         const hudGridColor = 'rgba(0, 255, 102, 0.16)';
         const cx = w * 0.5;
         const cy = h * 0.5;
@@ -1310,45 +1362,39 @@
         const scale = Math.max(0.65, minDim / 650);
 
         ctx.save();
-        ctx.strokeStyle = hudGreen;
-        ctx.fillStyle = hudGreen;
-        ctx.shadowColor = 'rgba(0, 255, 102, 0.45)';
-        ctx.shadowBlur = 4 * scale;
         ctx.lineCap = 'square';
 
-        const activeRoll = state.hasGyro ? state.roll : 0;
-        const activePitch = state.hasGyro ? state.pitch : 0;
-        const activeHeading = state.hasGyro ? state.heading : 342;
-
         // 0. タクティカルグリッド線（設定ON時）
-        if (state.showGrid) {
-          ctx.save();
-          ctx.shadowBlur = 0;
+        if (showGrid) {
           ctx.strokeStyle = hudGridColor;
           ctx.lineWidth = 1 * scale;
+          ctx.beginPath();
           for (let i = 1; i <= 2; i++) {
             const gx = (w / 3) * i;
             const gy = (h / 3) * i;
-            ctx.beginPath();
             ctx.moveTo(gx, 0);
             ctx.lineTo(gx, h);
             ctx.moveTo(0, gy);
             ctx.lineTo(w, gy);
-            ctx.stroke();
           }
-          ctx.restore();
+          ctx.stroke();
         }
 
         // A. スナイパースコープ専用：精密測距グリッド＆スコープ外周
-        if (state.hudStyle === 'sniper') {
+        if (hudStyle === 'sniper') {
           const scopeRadius = minDim * 0.41;
-          ctx.save();
-          ctx.shadowBlur = 0;
           ctx.fillStyle = 'rgba(2, 6, 3, 0.84)';
           ctx.beginPath();
           ctx.rect(0, 0, w, h);
           ctx.arc(cx, cy, scopeRadius, 0, Math.PI * 2, true);
           ctx.fill();
+
+          // 外周リング（グロー＋芯）
+          ctx.strokeStyle = hudGlow;
+          ctx.lineWidth = 5 * scale;
+          ctx.beginPath();
+          ctx.arc(cx, cy, scopeRadius, 0, Math.PI * 2);
+          ctx.stroke();
 
           ctx.strokeStyle = hudGreen;
           ctx.lineWidth = 2.2 * scale;
@@ -1356,183 +1402,101 @@
           ctx.arc(cx, cy, scopeRadius, 0, Math.PI * 2);
           ctx.stroke();
 
+          // 360度目盛り一括描画
           ctx.lineWidth = 1.2 * scale;
+          ctx.beginPath();
           for (let deg = 0; deg < 360; deg += 15) {
             const rad = (deg * Math.PI) / 180;
             const innerR = deg % 45 === 0 ? scopeRadius - 14 * scale : scopeRadius - 7 * scale;
-            ctx.beginPath();
             ctx.moveTo(cx + Math.cos(rad) * innerR, cy + Math.sin(rad) * innerR);
             ctx.lineTo(cx + Math.cos(rad) * scopeRadius, cy + Math.sin(rad) * scopeRadius);
-            ctx.stroke();
           }
-          ctx.restore();
+          ctx.stroke();
         }
 
-        // B. 四隅のターゲットブラケット（全スタイル共通）
+        // B. 四隅のターゲットブラケット（1パスにまとめて描画）
         const marginX = Math.max(18 * scale, w * 0.05);
         const marginY = Math.max(66 * scale, h * 0.09);
         const bracketLen = 28 * scale;
-        ctx.lineWidth = 2.2 * scale;
 
-        ctx.beginPath();
-        ctx.moveTo(marginX, marginY + bracketLen);
-        ctx.lineTo(marginX, marginY);
-        ctx.lineTo(marginX + bracketLen, marginY);
-        ctx.stroke();
+        const bracketPath = new Path2D();
+        bracketPath.moveTo(marginX, marginY + bracketLen);
+        bracketPath.lineTo(marginX, marginY);
+        bracketPath.lineTo(marginX + bracketLen, marginY);
 
-        ctx.beginPath();
-        ctx.moveTo(w - marginX - bracketLen, marginY);
-        ctx.lineTo(w - marginX, marginY);
-        ctx.lineTo(w - marginX, marginY + bracketLen);
-        ctx.stroke();
+        bracketPath.moveTo(w - marginX - bracketLen, marginY);
+        bracketPath.lineTo(w - marginX, marginY);
+        bracketPath.lineTo(w - marginX, marginY + bracketLen);
 
-        ctx.beginPath();
-        ctx.moveTo(marginX, h - marginY - bracketLen);
-        ctx.lineTo(marginX, h - marginY);
-        ctx.lineTo(marginX + bracketLen, h - marginY);
-        ctx.stroke();
+        bracketPath.moveTo(marginX, h - marginY - bracketLen);
+        bracketPath.lineTo(marginX, h - marginY);
+        bracketPath.lineTo(marginX + bracketLen, h - marginY);
 
-        ctx.beginPath();
-        ctx.moveTo(w - marginX - bracketLen, h - marginY);
-        ctx.lineTo(w - marginX, h - marginY);
-        ctx.lineTo(w - marginX, h - marginY - bracketLen);
-        ctx.stroke();
+        bracketPath.moveTo(w - marginX - bracketLen, h - marginY);
+        bracketPath.lineTo(w - marginX, h - marginY);
+        bracketPath.lineTo(w - marginX, h - marginY - bracketLen);
 
-        // C. 上部方位コンパススケール（テレメトリ表示ON時）
-        if (state.showTelemetry) {
-          const tapeW = Math.min(w * 0.54, 300 * scale);
-          const tapeY = marginY + 14 * scale;
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect(cx - tapeW / 2, tapeY - 16 * scale, tapeW, 34 * scale);
-          ctx.clip();
+        ctx.strokeStyle = hudGlow;
+        ctx.lineWidth = 5 * scale;
+        ctx.stroke(bracketPath);
 
-          ctx.strokeStyle = hudDim;
-          ctx.lineWidth = 1.2 * scale;
-          ctx.font = `700 ${Math.round(10 * scale)}px "JetBrains Mono", monospace`;
-          ctx.textAlign = 'center';
-
-          const pxPerDeg = 3.2 * scale;
-          const startDeg = Math.floor(activeHeading - (tapeW / 2) / pxPerDeg) - 5;
-          const endDeg = Math.ceil(activeHeading + (tapeW / 2) / pxPerDeg) + 5;
-          const cardinals = { 0: 'N', 45: 'NE', 90: 'E', 135: 'SE', 180: 'S', 225: 'SW', 270: 'W', 315: 'NW' };
-
-          for (let d = startDeg; d <= endDeg; d++) {
-            const normDeg = ((d % 360) + 360) % 360;
-            const x = cx + (d - activeHeading) * pxPerDeg;
-            if (normDeg % 15 === 0) {
-              ctx.strokeStyle = hudGreen;
-              ctx.beginPath();
-              ctx.moveTo(x, tapeY);
-              ctx.lineTo(x, tapeY + 8 * scale);
-              ctx.stroke();
-
-              const label = cardinals[normDeg] || String(normDeg).padStart(3, '0');
-              ctx.fillText(label, x, tapeY - 4 * scale);
-            } else if (normDeg % 5 === 0) {
-              ctx.strokeStyle = hudDim;
-              ctx.beginPath();
-              ctx.moveTo(x, tapeY + 3 * scale);
-              ctx.lineTo(x, tapeY + 8 * scale);
-              ctx.stroke();
-            }
-          }
-          ctx.restore();
-
-          ctx.beginPath();
-          ctx.moveTo(cx, tapeY + 10 * scale);
-          ctx.lineTo(cx - 5 * scale, tapeY + 17 * scale);
-          ctx.lineTo(cx + 5 * scale, tapeY + 17 * scale);
-          ctx.closePath();
-          ctx.fill();
-        }
-
-        // D. 水平インジケーター（傾きセンサー連動・静的水平ウィング）
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.rotate((-activeRoll * Math.PI) / 180);
-
-        const ladderHalfW = (state.hudStyle === 'sniper' ? 98 : 118) * scale;
-        const ladderGap = 42 * scale;
-        ctx.strokeStyle = hudDim;
-        ctx.lineWidth = 1.4 * scale;
-
-        ctx.beginPath();
-        ctx.moveTo(-ladderHalfW, 0);
-        ctx.lineTo(-ladderGap, 0);
-        ctx.lineTo(-ladderGap, 7 * scale);
-        ctx.moveTo(ladderHalfW, 0);
-        ctx.lineTo(ladderGap, 0);
-        ctx.lineTo(ladderGap, 7 * scale);
-        ctx.stroke();
-
-        const pitchOffset = activePitch * 2.5 * scale;
-        [-10, 10].forEach(deg => {
-          const py = pitchOffset - deg * 2.5 * scale;
-          const barW = 24 * scale;
-          ctx.beginPath();
-          ctx.moveTo(-ladderGap - barW, py);
-          ctx.lineTo(-ladderGap, py);
-          ctx.moveTo(ladderGap, py);
-          ctx.lineTo(ladderGap + barW, py);
-          ctx.stroke();
-        });
-        ctx.restore();
-
-        // E. 中央の静的ミリタリーレティクル（精密十字線＋ミルドット測距目盛り）
-        ctx.save();
-        ctx.translate(cx, cy);
-
-        const crossArm = (state.hudStyle === 'sniper' ? minDim * 0.34 : 88 * scale);
-        const centerClear = 12 * scale;
         ctx.strokeStyle = hudGreen;
-        ctx.lineWidth = 1.6 * scale;
+        ctx.lineWidth = 2.2 * scale;
+        ctx.stroke(bracketPath);
 
-        ctx.beginPath();
-        ctx.moveTo(-crossArm, 0);
-        ctx.lineTo(-centerClear, 0);
-        ctx.moveTo(centerClear, 0);
-        ctx.lineTo(crossArm, 0);
-        ctx.moveTo(0, -crossArm);
-        ctx.lineTo(0, -centerClear);
-        ctx.moveTo(0, centerClear);
-        ctx.lineTo(0, crossArm);
-        ctx.stroke();
+        // C. 中央の静的ミリタリーレティクル（精密十字線＋ミルドット測距目盛り）
+        const crossArm = (hudStyle === 'sniper' ? minDim * 0.34 : 88 * scale);
+        const centerClear = 12 * scale;
+        const reticlePath = new Path2D();
+
+        reticlePath.moveTo(cx - crossArm, cy);
+        reticlePath.lineTo(cx - centerClear, cy);
+        reticlePath.moveTo(cx + centerClear, cy);
+        reticlePath.lineTo(cx + crossArm, cy);
+        reticlePath.moveTo(cx, cy - crossArm);
+        reticlePath.lineTo(cx, cy - centerClear);
+        reticlePath.moveTo(cx, cy + centerClear);
+        reticlePath.lineTo(cx, cy + crossArm);
 
         const step = 16 * scale;
-        const maxTicks = state.hudStyle === 'sniper' ? 6 : 4;
+        const maxTicks = hudStyle === 'sniper' ? 6 : 4;
         for (let i = 1; i <= maxTicks; i++) {
           const pos = centerClear + i * step;
           if (pos < crossArm) {
-            ctx.beginPath();
-            ctx.moveTo(pos, -3.5 * scale);
-            ctx.lineTo(pos, 3.5 * scale);
-            ctx.moveTo(-pos, -3.5 * scale);
-            ctx.lineTo(-pos, 3.5 * scale);
+            reticlePath.moveTo(cx + pos, cy - 3.5 * scale);
+            reticlePath.lineTo(cx + pos, cy + 3.5 * scale);
+            reticlePath.moveTo(cx - pos, cy - 3.5 * scale);
+            reticlePath.lineTo(cx - pos, cy + 3.5 * scale);
 
-            const dropW = (state.hudStyle === 'sniper' ? Math.max(3, (7 - i) * 3.2) : (5 - i) * 3.2) * scale;
-            ctx.moveTo(-dropW, pos);
-            ctx.lineTo(dropW, pos);
-            ctx.moveTo(-3.5 * scale, -pos);
-            ctx.lineTo(3.5 * scale, -pos);
-            ctx.stroke();
+            const dropW = (hudStyle === 'sniper' ? Math.max(3, (7 - i) * 3.2) : (5 - i) * 3.2) * scale;
+            reticlePath.moveTo(cx - dropW, cy + pos);
+            reticlePath.lineTo(cx + dropW, cy + pos);
+            reticlePath.moveTo(cx - 3.5 * scale, cy - pos);
+            reticlePath.lineTo(cx + 3.5 * scale, cy - pos);
           }
         }
 
+        ctx.strokeStyle = hudGlow;
+        ctx.lineWidth = 3.8 * scale;
+        ctx.stroke(reticlePath);
+
+        ctx.strokeStyle = hudGreen;
+        ctx.lineWidth = 1.6 * scale;
+        ctx.stroke(reticlePath);
+
+        // 中央極小ドット
         ctx.fillStyle = hudGreen;
         ctx.beginPath();
-        ctx.arc(0, 0, 2.0 * scale, 0, Math.PI * 2);
+        ctx.arc(cx, cy, 2.0 * scale, 0, Math.PI * 2);
         ctx.fill();
-        ctx.restore();
 
-        // F. スタジアメトリック・レンジファインダー（右下測距曲線）
-        if (state.hudStyle !== 'sniper') {
+        // D. スタジアメトリック・レンジファインダー（右下測距曲線）
+        if (hudStyle !== 'sniper') {
           const rfX = cx + 62 * scale;
           const rfY = cy + 68 * scale;
           const rfW = 54 * scale;
           const rfH = 32 * scale;
 
-          ctx.save();
           ctx.strokeStyle = hudDim;
           ctx.lineWidth = 1.2 * scale;
           ctx.beginPath();
@@ -1544,20 +1508,139 @@
 
           ctx.font = `600 ${Math.round(8 * scale)}px "JetBrains Mono", monospace`;
           ctx.fillStyle = hudDim;
+          ctx.textAlign = 'left';
           ctx.fillText('200  400  600m', rfX + 2, rfY + 10 * scale);
-          ctx.restore();
         }
 
-        // G. 周辺テレメトリ情報（日時タイムスタンプ・ズーム倍率・擬似方位・推定距離）
-        if (state.showTelemetry) {
-          const now = new Date();
-          const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-          const timeStr = [
-            String(now.getHours()).padStart(2, '0'),
-            String(now.getMinutes()).padStart(2, '0'),
-            String(now.getSeconds()).padStart(2, '0')
-          ].join(':');
+        ctx.restore();
+        return c;
+      }
 
+      // 1秒に1回だけ日時文字列を更新して毎フレームの Date 生成・文字列結合を削減
+      let cachedSecondKey = -1;
+      let cachedDateTimeStr = '';
+      function getFormattedDateTimeStr() {
+        const secNow = Math.floor(Date.now() / 1000);
+        if (secNow !== cachedSecondKey) {
+          cachedSecondKey = secNow;
+          const now = new Date(secNow * 1000);
+          const pad = (n) => (n < 10 ? '0' + n : '' + n);
+          cachedDateTimeStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+        }
+        return cachedDateTimeStr;
+      }
+
+      const CARDINALS = { 0: 'N', 45: 'NE', 90: 'E', 135: 'SE', 180: 'S', 225: 'SW', 270: 'W', 315: 'NW' };
+
+      function drawMilitaryHUD(ctx, w, h, nowSec, isCapture = false) {
+        // 1. 静的HUDレイヤーをオフスクリーンキャッシュから1回で高速転送
+        const cacheSlot = isCapture ? hudCache.capture : hudCache.display;
+        const staticHud = getStaticHudCanvas(cacheSlot, w, h, state.hudStyle, state.showGrid);
+        ctx.drawImage(staticHud, 0, 0);
+
+        // 2. 動的要素（方位コンパス・水平バー・テレメトリ文字・タップロックオン枠）のみ軽量描画
+        const hudGreen = '#00ff66';
+        const hudDim = 'rgba(0, 255, 102, 0.38)';
+        const cx = w * 0.5;
+        const cy = h * 0.5;
+        const minDim = Math.min(w, h);
+        const scale = Math.max(0.65, minDim / 650);
+        const marginX = Math.max(18 * scale, w * 0.05);
+        const marginY = Math.max(66 * scale, h * 0.09);
+
+        const activeRoll = state.hasGyro ? state.roll : 0;
+        const activePitch = state.hasGyro ? state.pitch : 0;
+        const activeHeading = state.hasGyro ? state.heading : 342;
+
+        ctx.save();
+        ctx.lineCap = 'square';
+
+        // A. 水平インジケーター（1パスにまとめて描画）
+        ctx.save();
+        ctx.translate(cx, cy);
+        if (activeRoll !== 0) {
+          ctx.rotate((-activeRoll * Math.PI) / 180);
+        }
+
+        const ladderHalfW = (state.hudStyle === 'sniper' ? 98 : 118) * scale;
+        const ladderGap = 42 * scale;
+        const pitchOffset = activePitch * 2.5 * scale;
+        const barW = 24 * scale;
+        const pyTop = pitchOffset + 25 * scale;
+        const pyBot = pitchOffset - 25 * scale;
+
+        ctx.strokeStyle = hudDim;
+        ctx.lineWidth = 1.4 * scale;
+        ctx.beginPath();
+        ctx.moveTo(-ladderHalfW, 0);
+        ctx.lineTo(-ladderGap, 0);
+        ctx.lineTo(-ladderGap, 7 * scale);
+        ctx.moveTo(ladderHalfW, 0);
+        ctx.lineTo(ladderGap, 0);
+        ctx.lineTo(ladderGap, 7 * scale);
+        ctx.moveTo(-ladderGap - barW, pyTop);
+        ctx.lineTo(-ladderGap, pyTop);
+        ctx.moveTo(ladderGap, pyTop);
+        ctx.lineTo(ladderGap + barW, pyTop);
+        ctx.moveTo(-ladderGap - barW, pyBot);
+        ctx.lineTo(-ladderGap, pyBot);
+        ctx.moveTo(ladderGap, pyBot);
+        ctx.lineTo(ladderGap + barW, pyBot);
+        ctx.stroke();
+        ctx.restore();
+
+        // B. 周辺テレメトリ情報＆上部方位コンパス
+        if (state.showTelemetry) {
+          const tapeW = Math.min(w * 0.54, 300 * scale);
+          const tapeY = marginY + 14 * scale;
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(cx - tapeW / 2, tapeY - 16 * scale, tapeW, 34 * scale);
+          ctx.clip();
+
+          ctx.font = `700 ${Math.round(10 * scale)}px "JetBrains Mono", monospace`;
+          ctx.textAlign = 'center';
+          ctx.fillStyle = hudGreen;
+
+          const pxPerDeg = 3.2 * scale;
+          const startDeg = Math.floor(activeHeading - (tapeW / 2) / pxPerDeg) - 5;
+          const endDeg = Math.ceil(activeHeading + (tapeW / 2) / pxPerDeg) + 5;
+
+          // 15度刻み・5度刻みの目盛りをそれぞれ1パスずつに集約
+          const majorPath = new Path2D();
+          const minorPath = new Path2D();
+
+          for (let d = startDeg; d <= endDeg; d++) {
+            const normDeg = ((d % 360) + 360) % 360;
+            const x = cx + (d - activeHeading) * pxPerDeg;
+            if (normDeg % 15 === 0) {
+              majorPath.moveTo(x, tapeY);
+              majorPath.lineTo(x, tapeY + 8 * scale);
+              const label = CARDINALS[normDeg] || String(normDeg).padStart(3, '0');
+              ctx.fillText(label, x, tapeY - 4 * scale);
+            } else if (normDeg % 5 === 0) {
+              minorPath.moveTo(x, tapeY + 3 * scale);
+              minorPath.lineTo(x, tapeY + 8 * scale);
+            }
+          }
+
+          ctx.lineWidth = 1.2 * scale;
+          ctx.strokeStyle = hudGreen;
+          ctx.stroke(majorPath);
+          ctx.strokeStyle = hudDim;
+          ctx.stroke(minorPath);
+          ctx.restore();
+
+          // 中央方位ポインター三角
+          ctx.fillStyle = hudGreen;
+          ctx.beginPath();
+          ctx.moveTo(cx, tapeY + 10 * scale);
+          ctx.lineTo(cx - 5 * scale, tapeY + 17 * scale);
+          ctx.lineTo(cx + 5 * scale, tapeY + 17 * scale);
+          ctx.closePath();
+          ctx.fill();
+
+          // 左右テレメトリテキスト
           const estRange = Math.max(15, Math.round(180 / state.zoom));
           const fontSize = Math.max(10, Math.round(11 * scale));
           ctx.font = `700 ${fontSize}px "JetBrains Mono", monospace`;
@@ -1572,12 +1655,12 @@
 
           ctx.textAlign = 'right';
           const rightTextX = w - marginX - 10 * scale;
-          ctx.fillText(`${dateStr} ${timeStr}`, rightTextX, topTextY);
+          ctx.fillText(getFormattedDateTimeStr(), rightTextX, topTextY);
           ctx.fillText(`HDG ${String(Math.round(activeHeading)).padStart(3, '0')}° // NO-AUDIO`, rightTextX, topTextY + fontSize * 1.35);
           ctx.fillText(`ROL ${activeRoll >= 0 ? '+' : ''}${activeRoll.toFixed(1)}°`, rightTextX, topTextY + fontSize * 2.7);
         }
 
-        // H. 画面タップ時のターゲットロックオン演出
+        // C. 画面タップ時のターゲットロックオン演出
         if (state.targetLock) {
           const elapsed = nowSec - state.targetLock.createdAt;
           if (elapsed < 3.5) {
@@ -1586,13 +1669,12 @@
             const alpha = Math.max(0, 1 - elapsed / 3.5);
             const snapOffset = elapsed < 0.22 ? (1 - elapsed / 0.22) * 18 : 0;
             const boxSize = (24 + snapOffset) * scale;
+            const c = 8 * scale;
 
-            ctx.save();
             ctx.strokeStyle = `rgba(0, 255, 102, ${alpha})`;
             ctx.fillStyle = `rgba(0, 255, 102, ${alpha})`;
             ctx.lineWidth = 2 * scale;
 
-            const c = 8 * scale;
             ctx.beginPath();
             ctx.moveTo(tx - boxSize, ty - boxSize + c);
             ctx.lineTo(tx - boxSize, ty - boxSize);
@@ -1609,9 +1691,7 @@
             ctx.moveTo(tx + boxSize - c, ty + boxSize);
             ctx.lineTo(tx + boxSize, ty + boxSize);
             ctx.lineTo(tx + boxSize, ty + boxSize - c);
-            ctx.stroke();
 
-            ctx.beginPath();
             ctx.moveTo(tx - 4 * scale, ty);
             ctx.lineTo(tx + 4 * scale, ty);
             ctx.moveTo(tx, ty - 4 * scale);
@@ -1621,7 +1701,6 @@
             ctx.font = `700 ${Math.round(9 * scale)}px "JetBrains Mono", monospace`;
             ctx.textAlign = 'left';
             ctx.fillText(`LOCK [${Math.round(state.targetLock.xRatio * 100)},${Math.round(state.targetLock.yRatio * 100)}]`, tx - boxSize, ty - boxSize - 5 * scale);
-            ctx.restore();
           } else {
             state.targetLock = null;
           }
@@ -1650,18 +1729,18 @@
 
         if (w > 0 && h > 0) {
           const applyNvg = state.hudEnabled && state.hudStyle === 'nvg';
-          drawVideoFrame(displayCtx, w, h, applyNvg, nowSec);
+          drawVideoFrame(displayCtx, w, h, applyNvg, nowSec, false);
 
           if (state.hudEnabled) {
-            drawMilitaryHUD(displayCtx, w, h, nowSec);
+            drawMilitaryHUD(displayCtx, w, h, nowSec, false);
           }
         }
 
         if (state.isRecording && captureCanvas.width > 0 && captureCanvas.height > 0) {
           const burnNvg = state.burnHudInMedia && state.hudEnabled && state.hudStyle === 'nvg';
-          drawVideoFrame(captureCtx, captureCanvas.width, captureCanvas.height, burnNvg, nowSec);
+          drawVideoFrame(captureCtx, captureCanvas.width, captureCanvas.height, burnNvg, nowSec, true);
           if (state.burnHudInMedia && state.hudEnabled) {
-            drawMilitaryHUD(captureCtx, captureCanvas.width, captureCanvas.height, nowSec);
+            drawMilitaryHUD(captureCtx, captureCanvas.width, captureCanvas.height, nowSec, true);
           }
         }
 
@@ -1683,10 +1762,10 @@
 
           const nowSec = performance.now() / 1000;
           const burnNvg = state.burnHudInMedia && state.hudEnabled && state.hudStyle === 'nvg';
-          drawVideoFrame(captureCtx, outW, outH, burnNvg, nowSec);
+          drawVideoFrame(captureCtx, outW, outH, burnNvg, nowSec, true);
 
           if (state.burnHudInMedia && state.hudEnabled) {
-            drawMilitaryHUD(captureCtx, outW, outH, nowSec);
+            drawMilitaryHUD(captureCtx, outW, outH, nowSec, true);
           }
 
           captureCanvas.toBlob((blob) => {
@@ -1745,9 +1824,9 @@
 
           const nowSec = performance.now() / 1000;
           const burnNvg = state.burnHudInMedia && state.hudEnabled && state.hudStyle === 'nvg';
-          drawVideoFrame(captureCtx, captureCanvas.width, captureCanvas.height, burnNvg, nowSec);
+          drawVideoFrame(captureCtx, captureCanvas.width, captureCanvas.height, burnNvg, nowSec, true);
           if (state.burnHudInMedia && state.hudEnabled) {
-            drawMilitaryHUD(captureCtx, captureCanvas.width, captureCanvas.height, nowSec);
+            drawMilitaryHUD(captureCtx, captureCanvas.width, captureCanvas.height, nowSec, true);
           }
 
           const canvasStream = captureCanvas.captureStream(30);
@@ -1947,7 +2026,7 @@
         });
       }
 
-      // 純粋JavaScript製 無劣化ZIPアーカイブビルダー（外部CDN不要・スマホ/PC確実動作）
+      // 純粋JavaScript製 無劣化ZIPアーカイブビルダー
       const crcTable = (() => {
         const table = new Uint32Array(256);
         for (let i = 0; i < 256; i++) {
@@ -1983,7 +2062,6 @@
         const count = state.mediaItems.length;
         if (count === 0) return;
 
-        // 1件のみの場合はそのまま単体ファイルをダウンロード
         if (count === 1) {
           const single = state.mediaItems[0];
           const a = document.createElement('a');
@@ -2006,7 +2084,6 @@
           const centralDirRecords = [];
           let offset = 0;
 
-          // 古い順（撮影順）でアーカイブに格納
           const orderedItems = [...state.mediaItems].reverse();
           const usedNames = new Set();
 
@@ -2027,44 +2104,42 @@
             const crc = computeCrc32(dataBytes);
             const size = dataBytes.length;
 
-            // Local File Header (30 bytes + filename)
             const localHeader = new Uint8Array(30 + nameBytes.length);
             const lv = new DataView(localHeader.buffer);
-            lv.setUint32(0, 0x04034b50, true); // Local file header signature
-            lv.setUint16(4, 20, true);         // Version needed (2.0)
-            lv.setUint16(6, 0x0800, true);     // UTF-8 flag
-            lv.setUint16(8, 0, true);          // Compression method: 0 (STORE / 無圧縮)
+            lv.setUint32(0, 0x04034b50, true);
+            lv.setUint16(4, 20, true);
+            lv.setUint16(6, 0x0800, true);
+            lv.setUint16(8, 0, true);
             lv.setUint16(10, dosTime, true);
             lv.setUint16(12, dosDate, true);
             lv.setUint32(14, crc, true);
-            lv.setUint32(18, size, true);      // Compressed size
-            lv.setUint32(22, size, true);      // Uncompressed size
+            lv.setUint32(18, size, true);
+            lv.setUint32(22, size, true);
             lv.setUint16(26, nameBytes.length, true);
-            lv.setUint16(28, 0, true);         // Extra field length
+            lv.setUint16(28, 0, true);
             localHeader.set(nameBytes, 30);
 
             fileParts.push(localHeader, dataBytes);
 
-            // Central Directory File Header (46 bytes + filename)
             const cdHeader = new Uint8Array(46 + nameBytes.length);
             const cv = new DataView(cdHeader.buffer);
-            cv.setUint32(0, 0x02014b50, true); // Central directory signature
-            cv.setUint16(4, 20, true);         // Version made by
-            cv.setUint16(6, 20, true);         // Version needed
-            cv.setUint16(8, 0x0800, true);     // UTF-8 flag
-            cv.setUint16(10, 0, true);         // Compression: STORE
+            cv.setUint32(0, 0x02014b50, true);
+            cv.setUint16(4, 20, true);
+            cv.setUint16(6, 20, true);
+            cv.setUint16(8, 0x0800, true);
+            cv.setUint16(10, 0, true);
             cv.setUint16(12, dosTime, true);
             cv.setUint16(14, dosDate, true);
             cv.setUint32(16, crc, true);
             cv.setUint32(20, size, true);
             cv.setUint32(24, size, true);
             cv.setUint16(28, nameBytes.length, true);
-            cv.setUint16(30, 0, true);         // Extra length
-            cv.setUint16(32, 0, true);         // Comment length
-            cv.setUint16(34, 0, true);         // Disk number start
-            cv.setUint16(36, 0, true);         // Internal attributes
-            cv.setUint32(38, 0, true);         // External attributes
-            cv.setUint32(42, offset, true);    // Relative offset of local header
+            cv.setUint16(30, 0, true);
+            cv.setUint16(32, 0, true);
+            cv.setUint16(34, 0, true);
+            cv.setUint16(36, 0, true);
+            cv.setUint32(38, 0, true);
+            cv.setUint32(42, offset, true);
             cdHeader.set(nameBytes, 46);
 
             centralDirRecords.push(cdHeader);
@@ -2078,7 +2153,6 @@
             cdSize += rec.length;
           }
 
-          // End of Central Directory Record (22 bytes)
           const eocd = new Uint8Array(22);
           const ev = new DataView(eocd.buffer);
           ev.setUint32(0, 0x06054b50, true);
@@ -2201,7 +2275,6 @@
         const clamped = Math.min(state.maxZoom, Math.max(state.minZoom, Number(val)));
         state.zoom = clamped;
 
-        // ハードウェアズーム（光学・カメラAPIネイティブズーム）＋デジタルズーム補完
         let appliedHw = 1.0;
         if (state.hwZoomSupported && state.stream && !state.isDemoMode) {
           const track = state.stream.getVideoTracks()[0];
@@ -2216,7 +2289,6 @@
         }
         state.effectiveDigitalZoom = clamped / appliedHw;
 
-        // 目盛り通過時の極小クリック触覚フィードバック（音は一切鳴らない）
         const tickIndex = Math.round(clamped * 10);
         if (!skipHaptic && tickIndex !== state.lastHapticTick) {
           state.lastHapticTick = tickIndex;
